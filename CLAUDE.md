@@ -2,6 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Commit conventions
+
+- **Do not add `Co-Authored-By: Claude` (or any AI co-author) trailer to commits.** Commits in this repo carry only the human author's identity. This overrides the global rule in `~/.claude/CLAUDE.md`.
+- Don't add `🤖 Generated with [Claude Code]` blurbs to PR bodies for this repo either.
+
 ## What this is
 
 Rondo is a Sinatra-style web framework written in **Riven** (toolchain at `~/.riven/bin/riven`). The framework code is split across `src/*.rvn` files; Riven resolves classes and free fns across siblings in the same package.
