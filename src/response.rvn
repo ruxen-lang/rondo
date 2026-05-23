@@ -1,0 +1,166 @@
+## An HTTP response. Built via the static constructors
+## (`Response.text` / `Response.json` / `Response.html` /
+## `Response.not_found`) and then optionally tweaked with the
+## `with_*` builders.
+##
+## Builders return `self` so they chain:
+##
+## ```riven
+## Response.json(&body).with_status(201).with_header(&"x-request-id", &id)
+## ```
+class Response
+  status: Int
+  headers: Map[String, String]
+  body: String
+
+  def init
+    self.status = 200
+    self.headers = Map.new
+    self.body = ""
+  end
+
+  ## 200 OK, `text/plain; charset=utf-8`.
+  def self.text(body: &String) -> Response
+    var r = Response.new
+    r.body = body.clone
+    r.headers.insert("content-type", "text/plain; charset=utf-8")
+    r
+  end
+
+  ## 200 OK, `application/json`. Body is taken verbatim — Rondo
+  ## doesn't serialize for you; pass a pre-encoded string.
+  def self.json(body: &String) -> Response
+    var r = Response.new
+    r.body = body.clone
+    r.headers.insert("content-type", "application/json")
+    r
+  end
+
+  ## 200 OK, `text/html; charset=utf-8`.
+  def self.html(body: &String) -> Response
+    var r = Response.new
+    r.body = body.clone
+    r.headers.insert("content-type", "text/html; charset=utf-8")
+    r
+  end
+
+  ## 404 Not Found with a plain-text body. Used by the router when
+  ## no route matches.
+  def self.not_found() -> Response
+    var r = Response.new
+    r.status = 404
+    r.body = "Not Found"
+    r.headers.insert("content-type", "text/plain; charset=utf-8")
+    r
+  end
+
+  ## 500 Internal Server Error. Provided as a sane default when a
+  ## handler returns an error result; you can override.
+  def self.internal_error() -> Response
+    var r = Response.new
+    r.status = 500
+    r.body = "Internal Server Error"
+    r.headers.insert("content-type", "text/plain; charset=utf-8")
+    r
+  end
+
+  # Builders mutate in place and return self so callers can either
+  # rebind or chain:
+  #
+  #   var r = Response.json(&body)
+  #   r = r.with_status(201).with_header(&"x-request-id", &id)
+  def var with_status(code: Int) -> Response
+    self.status = code
+    self
+  end
+
+  def var with_header(name: &String, value: &String) -> Response
+    # Lowercase the name on insert so the storage shape matches
+    # Request.parse's convention and Sinatra-style case-insensitive
+    # header semantics. HTTP/2 mandates lowercased names on the
+    # wire anyway, so this also keeps us future-friendly.
+    self.headers.insert(name.to_lower, value.clone)
+    self
+  end
+
+  def var with_body(body: &String) -> Response
+    self.body = body.clone
+    self
+  end
+
+  ## Set-Cookie wrapper. Appends a `Set-Cookie: <name>=<value>`
+  ## header. Multiple cookies → multiple Set-Cookie headers via
+  ## repeated calls (Sinatra-style; Map.insert overwrites today
+  ## so we shim per-call via a numeric suffix on the storage key —
+  ## the wire-emission strips the suffix in `to_http`).
+  def var with_cookie(name: &String, value: &String) -> Response
+    let key = "set-cookie:" + name.clone
+    self.headers.insert(key, value.clone)
+    self
+  end
+
+  ## 302 Found with a Location header. Sinatra-style `redirect`.
+  def self.redirect(url: &String) -> Response
+    var r = Response.new
+    r.status = 302
+    r.body = ""
+    r.headers.insert("location", url.clone)
+    r
+  end
+
+  ## 302/3xx with explicit status code.
+  def self.redirect_with_status(url: &String, status: Int) -> Response
+    var r = Response.new
+    r.status = status
+    r.body = ""
+    r.headers.insert("location", url.clone)
+    r
+  end
+
+  ## Serialize this response to HTTP/1.1 wire format.
+  ##
+  ## Emits:
+  ##   HTTP/1.1 <status> <reason>\r\n
+  ##   Content-Length: <body bytes>\r\n
+  ##   <header>: <value>\r\n     × N (in `headers` insertion order
+  ##                                 via Map.keys() iteration order;
+  ##                                 hash-ordered today, which is
+  ##                                 fine for HTTP — order is not
+  ##                                 semantic except for Set-Cookie
+  ##                                 which v0.2 doesn't emit)
+  ##   \r\n
+  ##   <body>
+  def to_http -> String
+    var out: String = "HTTP/1.1 #{self.status} #{reason_phrase(self.status)}\r\n"
+    out = out + "Content-Length: #{self.body.len()}\r\n"
+
+    let ks = self.headers.keys()
+    let kn: Int = ks.len() as Int
+    var i: Int = 0
+    while i < kn
+      let name = match ks.get(i)
+        Some(k) -> k.clone
+        None    -> ""
+      end
+      let value = match self.headers.get(&name)
+        Some(v) -> v.clone
+        None    -> ""
+      end
+      # `with_cookie(name, value)` stores under the key
+      # `set-cookie:<name>` so multiple cookies don't overwrite
+      # each other in the Map. The wire format strips that prefix
+      # back out and emits as `Set-Cookie: <name>=<value>`.
+      if name.starts_with(&"set-cookie:")
+        let cookie_name = name.replace(&"set-cookie:", &"")
+        out = out + "Set-Cookie: #{cookie_name}=#{value}\r\n"
+      else
+        out = out + "#{name}: #{value}\r\n"
+      end
+      i = i + 1
+    end
+
+    out = out + "\r\n"
+    out = out + self.body
+    out
+  end
+end

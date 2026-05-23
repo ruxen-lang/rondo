@@ -1,0 +1,92 @@
+## Late-binding helpers — signatures reference user types
+## (`Request`, `Route`, `Response`, `File`). Kept out of the
+## helpers file so the dependency direction is unambiguous:
+## these depend on the class declarations in `request.rvn` /
+## `response.rvn` / `route.rvn`.
+
+# Split "/path?query=string" into Request.path + .query and parse
+# the query pairs into Request.params. Both halves are
+# canonicalised: missing `?` → path is verbatim and query is empty;
+# present `?` → path is the prefix, query is everything after the
+# first `?` (additional `?`s stay in the query value).
+def split_path_query_into(p: &String, request: &var Request)
+  match p.find(&"?")
+    Some(_) ->
+      let parts = p.split(&"?")
+      request.path = segment_at(&parts, 0)
+      request.query = take_after_question(&parts)
+      parse_query_into(&request.query, &var request.params)
+    None ->
+      request.path = p.clone
+  end
+end
+
+# Pulled out of `dispatch` so the call-the-handler step stays a
+# single expression — the indexed lookup + Option unwrap +
+# closure call would otherwise nest a multi-statement match
+# inside the outer if/else.
+def invoke_route_handler(routes: &Array[Route], idx: Int, req: &Request) -> Response
+  match routes.get(idx)
+    Some(route) -> route.handler.(req)
+    None        -> Response.internal_error()
+  end
+end
+
+# HEAD-method fallback: find the index of the matching GET route
+# for `path` (same pattern-segment compare as `Route.matches`).
+# Returns -1 when no GET route matches. The path-param captures
+# from the GET pattern aren't surfaced here — the caller has
+# already populated `r.params` against the GET-route match in
+# step 1 of dispatch when method was GET; for the actual HEAD
+# request path the captures may not exist. Sinatra leaves this
+# fuzzy too — HEAD is for cache validation, not body-bearing
+# operations, so missing captures rarely matter.
+def find_get_route_for(routes: &Array[Route], path: &String) -> Int
+  let n: Int = routes.len() as Int
+  var i: Int = 0
+  while i < n
+    let route_opt = routes.get(i)
+    if route_opt.is_some()
+      let route = route_opt.unwrap()
+      if route.method == "GET"
+        var probe = Request.new
+        probe.method = String.from(&"GET")
+        probe.path = path.clone
+        let m = route.matches(&probe)
+        if m.is_some()
+          return i
+        end
+      end
+    end
+    i = i + 1
+  end
+  -1
+end
+
+# Static-file fallback: when no route matched, try to load
+# `<public_folder>/<path>` from disk. Returns 404 when the
+# public folder is unset, the file doesn't exist, or the read
+# fails. Successful reads come back as text/plain — content-
+# type detection is a v0.8 polish item.
+def try_static_or_404(public_folder: &String, path: &String) -> Response
+  if public_folder.len() == 0
+    return Response.not_found()
+  end
+  # Build the on-disk path. Reject `..` segments to avoid path
+  # traversal — Sinatra's `send_file` does the same.
+  if path.contains(&"..")
+    return Response.not_found()
+  end
+  let full = public_folder.clone + path.clone
+  match File.open(&full)
+    Ok(f) -> serve_open_file(f)
+    Err(_) -> Response.not_found()
+  end
+end
+
+def serve_open_file(f: File) -> Response
+  match f.read_to_string
+    Ok(body) -> Response.text(&body)
+    Err(_)   -> Response.internal_error()
+  end
+end

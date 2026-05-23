@@ -1,0 +1,123 @@
+## Async listener helpers — std.async_net + block_on. Mirrors the
+## sync server's `serve_forever / handle_one` flow but drives every
+## I/O step through `block_on(future)` instead of synchronous calls.
+##
+## Single-worker (`async_serve_loop`) — one accept, one full request
+## cycle, next accept; same shape as the sync path but through async
+## futures. Multi-worker (`spawn_async_workers`) — N OS threads, each
+## binding the same port via SO_REUSEPORT and running its own
+## per-thread reactor. The kernel load-balances accepts across the
+## bindings.
+
+def async_serve_loop(app: &Rondo, listener: AsyncTcpListener, addr: &String) -> Result[(), String]
+  puts "rondo: listening on #{addr} (async)"
+  var l = listener
+  var keep_going: Bool = true
+  while keep_going
+    let accepted = block_on(l.accept)
+    match accepted
+      Ok(pair) -> async_handle_pair(app, pair)
+      Err(_)   -> keep_going = false
+    end
+  end
+  Ok(nil)
+end
+
+def async_handle_pair(app: &Rondo, pair: (AsyncTcpStream, String))
+  # Destructure (stream, peer_addr) — drop the peer. Hand the
+  # stream by-move to the per-request worker so the executor
+  # can move on to the next accept after this returns.
+  let stream = pair.0
+  async_handle_one(app, stream)
+end
+
+def async_handle_one(app: &Rondo, stream: AsyncTcpStream) -> Int
+  # 64KB cap on a single read — the HTTP/1.1 standard max for
+  # the request line + headers + small bodies. Larger uploads
+  # would need a length-driven read loop; out of scope for the
+  # benchmark port.
+  var s = stream
+  let raw_result = block_on(s.read(65536))
+  match raw_result
+    Ok(raw) -> async_dispatch_and_write(app, s, raw)
+    Err(_)  -> 0
+  end
+end
+
+def async_dispatch_and_write(app: &Rondo, stream: AsyncTcpStream, raw: String) -> Int
+  let method = extract_method(&raw)
+  let resp = match Request.parse(&raw)
+    Some(req) -> app.dispatch(req)
+    None      -> Response.text(&"bad request").with_status(400)
+  end
+  let full_wire = resp.to_http
+  let wire = if method == "HEAD"
+    head_only_wire(&full_wire)
+  else
+    full_wire
+  end
+  var s = stream
+  let _w = block_on(s.write(&wire))
+  let _c = block_on(async_tcp_stream_close_of(s))
+  0
+end
+
+# ─────────────────────────────────────────────────────────────────
+# Multi-worker async — N reactors, one per OS thread, all bound
+# to the same port via SO_REUSEPORT.
+# ─────────────────────────────────────────────────────────────────
+
+def spawn_async_workers(app: &Rondo, addr: &String, workers: Int) -> Result[(), String]
+  puts "rondo: starting #{workers} async workers on #{addr}"
+  # Spawn (workers - 1) auxiliary OS threads, then run the last
+  # worker loop on the MAIN thread. That gives us `workers` reactors
+  # total — the spawn count — without needing a `park_main` shape
+  # for the main thread (it's parked naturally in `block_on(accept)`
+  # inside its own worker, just like the spawned ones). Avoids the
+  # JoinHandle-drop-elaboration foot-gun (Array[Int] of handles
+  # double-drops) and the silent-crash gap in `Thread.sleep(Int)`
+  # dispatch we hit while iterating on the park. The prior shape
+  # spun a busy loop on the main thread that burned ~100% of one
+  # perf core for the lifetime of the process (~2:30 of CPU per
+  # minute of idle time, measured).
+  var i: Int = 1
+  while i < workers
+    let _h = Thread.spawn({ || async_worker(app, addr) })
+    i = i + 1
+  end
+  let _last = async_worker(app, addr)
+  Ok(nil)
+end
+
+# Per-worker entry. Each worker binds the same port — the kernel
+# load-balances accepts across all bound sockets (requires
+# SO_REUSEPORT in the runtime). Returns Int as the JoinHandle's
+# result; we report 0 on bind failure and 1 on clean exit so a
+# crashing worker is distinguishable from a working one.
+def async_worker(app: &Rondo, addr: &String) -> Int
+  puts "worker: entering"
+  let bound = block_on(AsyncTcpListener.bind(addr))
+  puts "worker: bind returned"
+  match bound
+    Ok(listener) ->
+      let _x = 0
+      puts "worker: bind ok, entering serve"
+      async_worker_serve(app, listener)
+    Err(_) ->
+      puts "worker: bind FAILED"
+      0
+  end
+end
+
+def async_worker_serve(app: &Rondo, listener: AsyncTcpListener) -> Int
+  var l = listener
+  var keep_going: Bool = true
+  while keep_going
+    let accepted = block_on(l.accept)
+    match accepted
+      Ok(pair) -> async_handle_pair(app, pair)
+      Err(_)   -> keep_going = false
+    end
+  end
+  1
+end

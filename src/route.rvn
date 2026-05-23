@@ -1,0 +1,68 @@
+## One method+pattern pair with its handler. The framework user
+## rarely touches this directly — `Rondo.get` / `Rondo.post` / etc.
+## construct routes for you.
+class Route
+  method: String
+  pattern: String
+  handler: any Fn(&Request) -> Response
+
+  def init(method: &String, pattern: &String, handler: any Fn(&Request) -> Response)
+    self.method = method.clone
+    self.pattern = pattern.clone
+    self.handler = handler
+  end
+
+  ## Does this route match the incoming request?
+  ##
+  ## Splits both `self.pattern` and `req.path` on `/`. For each
+  ## segment pair: if the pattern segment starts with `:`, capture
+  ## the path segment into the params map; otherwise the pair must
+  ## match exactly. Returns `Some(captures)` on a hit (empty map
+  ## when no `:name` segments), `None` on a miss.
+  ##
+  ## Examples (after `Route.new("GET", "/users/:id/posts/:post_id", _)`):
+  ##   GET /users/42/posts/7  →  Some({id: "42", post_id: "7"})
+  ##   GET /users/42          →  None  (segment count mismatch)
+  ##   POST /users/42/posts/7 →  None  (method mismatch)
+  ##   GET /admin/42          →  None  (literal segment mismatch)
+  def matches(req: &Request) -> Option[Map[String, String]]
+    if self.method != req.method
+      return None
+    end
+
+    let pat_segs = self.pattern.split(&"/")
+    let path_segs = req.path.split(&"/")
+    let pn: Int = pat_segs.len() as Int
+    let xn: Int = path_segs.len() as Int
+    if pn != xn
+      return None
+    end
+
+    var captures: Map[String, String] = Map.new
+    var i: Int = 0
+    var ok: Bool = true
+    # Each iteration matches one segment pair. Riven match arms are
+    # single-expression unless the body starts with a statement
+    # keyword, so we inline the per-segment work via a string-equal
+    # check rather than nested matches — every arm yields a Bool.
+    while i < pn
+      if ok
+        let pseg_str = segment_at(&pat_segs, i)
+        let xseg_str = segment_at(&path_segs, i)
+        if pseg_str.starts_with(&":")
+          captures.insert(pseg_str.replace(&":", &""), xseg_str.clone)
+        else
+          if pseg_str != xseg_str
+            ok = false
+          end
+        end
+      end
+      i = i + 1
+    end
+    if ok
+      Some(captures)
+    else
+      None
+    end
+  end
+end

@@ -1,0 +1,255 @@
+## The router + server. Build one with `Rondo.new`, register routes
+## via `get` / `post` / `put` / `delete` / `patch`, then call
+## `dispatch` (in tests) or `listen` (in production).
+class Rondo
+  include Sync
+  include Send
+  routes: Array[Route]
+  # Before-hooks run in registration order before route dispatch.
+  # A hook returning `Some(response)` short-circuits the cycle —
+  # the rest of the chain (and the route handler) are skipped.
+  # Returning `None` lets the request flow through.
+  before_hooks: Array[any Fn(&Request) -> Option[Response]]
+  # After-hooks run after the route handler returns, in
+  # registration order. Each takes the request and the current
+  # response and returns the (possibly modified) response. Used
+  # for logging, adding standard headers, response rewrites.
+  after_hooks: Array[any Fn(&Request, Response) -> Response]
+  # Status-code error handlers. Keyed by the response's status
+  # code; if a route handler (or the 404 fallback) returns a
+  # status that has a registered error handler, the handler is
+  # invoked to produce the actual response. Implemented as
+  # parallel arrays because `Map[Int, any Fn(...)]` doesn't
+  # round-trip through Riven's generic-map storage cleanly.
+  error_codes: Array[Int]
+  error_handlers: Array[any Fn(&Request, Response) -> Response]
+  # Filesystem root for static file serving. Set via
+  # `app.set_public_folder(&"./public")`; empty disables static
+  # serving. On 404, Rondo looks for `<public_folder>/<path>` and
+  # serves it if found.
+  public_folder: String
+
+  def init
+    self.routes = Array.new
+    self.before_hooks = Array.new
+    self.after_hooks = Array.new
+    self.error_codes = Array.new
+    self.error_handlers = Array.new
+    self.public_folder = ""
+  end
+
+  ## Register a hook to run before each request. The hook receives
+  ## the (matched, params-populated) request and returns either
+  ## `Some(response)` to short-circuit (auth failures, redirects,
+  ## logging-as-Bad-Request) or `None` to let the request flow
+  ## through to the route handler.
+  def var before(hook: any Fn(&Request) -> Option[Response])
+    self.before_hooks.push(hook)
+  end
+
+  ## Register a hook to run after the route handler returns. The
+  ## hook receives the request and the current response, and
+  ## returns the (possibly rewritten) response. Used for logging,
+  ## adding tracing headers, gzipping, response timing, etc.
+  def var after(hook: any Fn(&Request, Response) -> Response)
+    self.after_hooks.push(hook)
+  end
+
+  ## Register a custom handler for a specific status code. When
+  ## the dispatched response carries that status, the error
+  ## handler runs with the original request + original response
+  ## and gets to substitute its own response. Sinatra's
+  ## `error 404 do ... end` shape.
+  def var on_error(status: Int, handler: any Fn(&Request, Response) -> Response)
+    self.error_codes.push(status)
+    self.error_handlers.push(handler)
+  end
+
+  ## Configure the directory for static file serving. Empty
+  ## string disables static serving (the default). On a 404
+  ## from the route table, Rondo looks for
+  ## `<public_folder>/<request_path>` and serves it if found.
+  def var set_public_folder(path: &String)
+    self.public_folder = path.clone
+  end
+
+  def var get(path: &String, handler: any Fn(&Request) -> Response)
+    self.routes.push(Route.new(&"GET", path, handler))
+  end
+
+  def var post(path: &String, handler: any Fn(&Request) -> Response)
+    self.routes.push(Route.new(&"POST", path, handler))
+  end
+
+  def var put(path: &String, handler: any Fn(&Request) -> Response)
+    self.routes.push(Route.new(&"PUT", path, handler))
+  end
+
+  def var delete(path: &String, handler: any Fn(&Request) -> Response)
+    self.routes.push(Route.new(&"DELETE", path, handler))
+  end
+
+  def var patch(path: &String, handler: any Fn(&Request) -> Response)
+    self.routes.push(Route.new(&"PATCH", path, handler))
+  end
+
+  ## Walk the route table; invoke the first matching handler.
+  ## Returns a 404 if no route matches. Pure — no I/O, no sockets.
+  ## This is the integration-test seam.
+  ##
+  ## Indexed-loop iteration is used in place of the natural
+  ## `for route in self.routes.iter` because the iterator-element
+  ## codegen path doesn't carry the element type through to method
+  ## dispatch (still an open Riven gap). `Array[T].get(i)` returns
+  ## `Option[&T]` whose payload IS typed correctly post-pattern-
+  ## propagation, so `match` on the result gives a concretely-typed
+  ## `&Route` binding.
+  def dispatch(req: Request) -> Response
+    # 1. Find the route. We need to dispatch even on miss so the
+    # before-hooks see the request first; on miss, the response
+    # is `Response.not_found()`.
+    let n: Int = self.routes.len() as Int
+    var i: Int = 0
+    var matched_idx: Int = -1
+    var matched_params: Map[String, String] = Map.new
+    while i < n && matched_idx < 0
+      match self.routes.get(i)
+        Some(route) ->
+          match route.matches(&req)
+            Some(params) ->
+              let _captured = params
+              matched_idx = i
+              matched_params = _captured
+            None -> 0
+          end
+        None -> 0
+      end
+      i = i + 1
+    end
+
+    # 2. Build the request the handler (and before-hooks) sees —
+    # path captures merged on top of any pre-parsed query-string
+    # params. Map.insert overwrites so explicit captures win.
+    var r = req
+    merge_params_into(&matched_params, &var r.params)
+
+    # 3. Walk before-hooks. The first one to return Some(resp)
+    # short-circuits the request — handler is skipped.
+    let hn: Int = self.before_hooks.len() as Int
+    var hi: Int = 0
+    while hi < hn
+      match self.before_hooks.get(hi)
+        Some(hook) ->
+          match hook.(&r)
+            Some(resp) -> return resp
+            None -> 0
+          end
+        None -> 0
+      end
+      hi = hi + 1
+    end
+
+    # 4. Dispatch — handler if matched, static-fallback or 404
+    # otherwise. HEAD requests fall back to the matching GET
+    # route (Sinatra/Rack convention).
+    var resp = if matched_idx >= 0
+      invoke_route_handler(&self.routes, matched_idx, &r)
+    else
+      let head_idx = if r.method == "HEAD"
+        find_get_route_for(&self.routes, &r.path)
+      else
+        -1
+      end
+      if head_idx >= 0
+        invoke_route_handler(&self.routes, head_idx, &r)
+      else
+        try_static_or_404(&self.public_folder, &r.path)
+      end
+    end
+
+    # 5. HEAD semantics: dispatch returns the full response
+    # (status + headers + body). The wire-level body stripping
+    # happens in `handle_one` after serialization so the
+    # Content-Length header still reflects what a GET would
+    # return — RFC 9110 §9.3.2 wants HEAD's Content-Length to
+    # match the corresponding GET's body byte count.
+
+    # 6. After-hooks: each gets to rewrite the response. Calling
+    # `hook.(&r, resp)` moves `resp` into the closure and binds the
+    # closure's return value back to `resp` for the next iteration.
+    let ahn: Int = self.after_hooks.len() as Int
+    var ahi: Int = 0
+    while ahi < ahn
+      let hook_opt = self.after_hooks.get(ahi)
+      if hook_opt.is_some()
+        let hook = hook_opt.unwrap()
+        resp = hook.(&r, resp)
+      end
+      ahi = ahi + 1
+    end
+
+    # 7. Error-handler substitution: if a handler is registered
+    # for the current status, run it. Last-wins: any later
+    # registration on the same status overwrites — same as
+    # Sinatra.
+    let ecn: Int = self.error_codes.len() as Int
+    var eci: Int = 0
+    while eci < ecn
+      let code_opt = self.error_codes.get(eci)
+      if code_opt.is_some()
+        let code = code_opt.unwrap()
+        if code == resp.status
+          match self.error_handlers.get(eci)
+            Some(h) -> resp = h.(&r, resp)
+            None    -> 0
+          end
+        end
+      end
+      eci = eci + 1
+    end
+
+    resp
+  end
+
+  ## Bind to the address and serve until interrupted. Synchronous,
+  ## single-threaded, one connection at a time.
+  def listen(addr: &String) -> Result[(), String]
+    match TcpListener.bind(addr)
+      Ok(listener) -> serve_forever(self, listener, addr)
+      Err(_)       -> Err(String.from(&"rondo: bind failed"))
+    end
+  end
+
+  ## Thread-per-connection variant of `listen`. Each accepted TCP
+  ## stream is handed to a fresh OS thread via `Thread.spawn`; the
+  ## main thread immediately returns to `accept`. Matches Puma's
+  ## threaded model (Sinatra's default production server). Same
+  ## route/hook/error-handler semantics as `listen` — only the
+  ## I/O scheduling changes.
+  def listen_threaded(addr: &String) -> Result[(), String]
+    match TcpListener.bind(addr)
+      Ok(listener) -> serve_forever_threaded(self, listener, addr)
+      Err(_)       -> Err(String.from(&"rondo: bind failed"))
+    end
+  end
+
+  ## Single-threaded async variant. Uses std.async_net + block_on
+  ## for non-blocking I/O on one OS thread. Connections are served
+  ## serially through async-shaped futures.
+  def listen_async(addr: &String) -> Result[(), String]
+    let bound = block_on(AsyncTcpListener.bind(addr))
+    match bound
+      Ok(listener) -> async_serve_loop(self, listener, addr)
+      Err(_)       -> Err(String.from(&"rondo: bind failed"))
+    end
+  end
+
+  ## Multi-worker async — N OS threads, each running its own
+  ## `block_on(serve_loop)` with its own per-thread reactor, all
+  ## bound to the same port via SO_REUSEPORT. The kernel
+  ## load-balances incoming connections across the worker
+  ## bindings.
+  def listen_async_multi(addr: &String, workers: Int) -> Result[(), String]
+    spawn_async_workers(self, addr, workers)
+  end
+end

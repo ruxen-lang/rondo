@@ -1,0 +1,199 @@
+## Synchronous TCP server — sync (one-at-a-time) + threaded
+## (one OS thread per connection) variants. Both eventually call
+## `handle_one(app, stream)` for the per-request work.
+
+# Accept loop. Runs until accept errors persistently. Lives as a
+# free fn (not a Rondo method) so its multi-statement body parses
+# cleanly without bumping into the closure / arm-body rules.
+def serve_forever(app: &Rondo, listener: TcpListener, addr: &String) -> Result[(), String]
+  puts "rondo: listening on #{addr}"
+  var keep_going: Bool = true
+  while keep_going
+    match listener.accept
+      Ok(stream) -> handle_one(app, stream)
+      Err(_)     -> keep_going = false
+    end
+  end
+  Ok(nil)
+end
+
+# Threaded accept loop: each accepted stream gets a fresh OS thread.
+# Closure capture: `app` is borrowed (read-only across the program's
+# lifetime — registration happens before `listen_threaded`, no
+# mutation after); `stream` is moved into the closure body so the
+# main thread can move on to the next accept without holding it.
+def serve_forever_threaded(app: &Rondo, listener: TcpListener, addr: &String) -> Result[(), String]
+  puts "rondo: listening on #{addr} (threaded)"
+  var keep_going: Bool = true
+  while keep_going
+    match listener.accept
+      Ok(stream) -> spawn_request(app, stream)
+      Err(_)     -> keep_going = false
+    end
+  end
+  Ok(nil)
+end
+
+def spawn_request(app: &Rondo, stream: TcpStream)
+  let _h = Thread.spawn({ || run_request(app, stream) })
+end
+
+# Free-fn body for the spawned thread. `Thread.spawn` futures return
+# Int; `handle_one` returns Unit, so we discard and yield 0 as the
+# join-handle's result.
+def run_request(app: &Rondo, stream: TcpStream) -> Int
+  handle_one(app, stream)
+  0
+end
+
+# One request/response cycle on a single TCP connection.
+# Reads request line + headers via BufReader.Tcp, parses through
+# Request.parse, dispatches through the app's route table, and
+# writes the serialized Response back to the stream.
+def handle_one(app: &Rondo, stream: TcpStream)
+  var br = BufReader.Tcp.new(stream)
+  let head = read_request_head(&var br)
+  # Pull Content-Length out of the head block (lowercased on
+  # insert by parse_header_into) and read that many additional
+  # bytes from the buffered stream as the body. Zero / missing
+  # Content-Length → no body, which is fine for GET/DELETE/HEAD.
+  let body = read_request_body(&var br, &head)
+  let raw = head + body
+  let method = extract_method(&raw)
+  let resp = match Request.parse(&raw)
+    Some(req) -> app.dispatch(req)
+    None      -> Response.text(&"bad request").with_status(400)
+  end
+  let full_wire = resp.to_http
+  # HEAD: send the head block + the empty CRLF separator only,
+  # with the Content-Length the GET would have reported. The
+  # serializer already computed that from `resp.body.len()`, so
+  # we just slice off everything after the `\r\n\r\n` marker.
+  let wire = if method == "HEAD"
+    head_only_wire(&full_wire)
+  else
+    full_wire
+  end
+  let inner = br.into_inner
+  let bytes = wire.bytes()
+  let _w = inner.write(&bytes)
+  let _c = inner.close
+end
+
+# Pull the request method ("GET" / "HEAD" / …) off the first line
+# of the raw request head. Defaults to "GET" on a malformed head.
+def extract_method(raw: &String) -> String
+  let lines = raw.split(&"\r\n")
+  let first = segment_at(&lines, 0)
+  let parts = first.split(&" ")
+  if (parts.len() as Int) >= 1
+    segment_at(&parts, 0)
+  else
+    String.from(&"GET")
+  end
+end
+
+# Slice the serialized response down to (status line + headers +
+# empty separator). Body bytes after `\r\n\r\n` are discarded —
+# the head block's Content-Length still reflects the GET-shape
+# byte count, matching RFC 9110 §9.3.2 for HEAD.
+def head_only_wire(full: &String) -> String
+  let parts = full.split(&"\r\n\r\n")
+  segment_at(&parts, 0) + "\r\n\r\n"
+end
+
+# Read a request body of `Content-Length` bytes from the buffered
+# stream. Returns an empty String when no Content-Length header is
+# present, when its value isn't a positive integer, or when the
+# read short-circuits (we don't retry on partial reads in v0.6).
+# Concatenation with the head + "\r\n\r\n" separator is the
+# caller's job — we just hand back the body bytes as a String.
+def read_request_body(br: &var BufReader.Tcp, head: &String) -> String
+  let n = parse_content_length(head)
+  if n <= 0
+    return ""
+  end
+  var buf: Array[Int] = Array.new
+  var got: Int = 0
+  while got < n
+    match br.read(&var buf)
+      Ok(_)  -> got = buf.len() as Int
+      Err(_) -> got = n
+    end
+  end
+  String.from_bytes(&buf)
+end
+
+# Walk the parsed head, find a `Content-Length: <int>` header (case
+# preserved on the wire, lowercased on insertion), parse it as
+# Int. Returns 0 when absent / malformed.
+def parse_content_length(head: &String) -> Int
+  let lines = head.split(&"\r\n")
+  let n: Int = lines.len() as Int
+  var i: Int = 0
+  var found: Int = 0
+  while i < n
+    let line = segment_at(&lines, i)
+    let lower = line.to_lower
+    if lower.starts_with(&"content-length:")
+      let parts = line.split(&":")
+      let raw = segment_at(&parts, 1)
+      match raw.trim.parse_int()
+        Ok(v)  -> found = v
+        Err(_) -> found = 0
+      end
+    end
+    i = i + 1
+  end
+  found
+end
+
+# Read the request head block (request line + headers) until the
+# first empty line or EOF. Returns the assembled head plus the
+# "\r\n\r\n" terminator so the caller can hand it straight to
+# Request.parse.
+def read_request_head(br: &var BufReader.Tcp) -> String
+  var lines: Array[String] = Array.new
+  var done: Bool = false
+  while !done
+    match br.read_line
+      Ok(line_opt) -> done = stash_or_stop(line_opt, &var lines)
+      Err(_)       -> done = true
+    end
+  end
+  join_crlf(&lines) + "\r\n\r\n"
+end
+
+def stash_or_stop(line_opt: Option[String], lines: &var Array[String]) -> Bool
+  match line_opt
+    Some(line) -> push_unless_empty(line, lines)
+    None       -> true
+  end
+end
+
+def push_unless_empty(line: String, lines: &var Array[String]) -> Bool
+  # `read_line` returns the line WITH its trailing `\r\n`. Strip
+  # CR/LF from the end so the empty-separator line (just `\r\n`)
+  # collapses to "" and ends the head block.
+  let trimmed = line.trim_end
+  if trimmed == ""
+    true
+  else
+    lines.push(trimmed)
+    false
+  end
+end
+
+def join_crlf(lines: &Array[String]) -> String
+  var out: String = ""
+  let n: Int = lines.len() as Int
+  var i: Int = 0
+  while i < n
+    if i > 0
+      out = out + "\r\n"
+    end
+    out = out + segment_at(lines, i)
+    i = i + 1
+  end
+  out
+end

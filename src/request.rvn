@@ -1,0 +1,109 @@
+## An incoming HTTP request. Handlers receive this by value.
+##
+## `params` carries route captures (`:id` from `/users/:id`) AND
+## query-string parameters (`?foo=bar`). Sinatra-style `req.param`
+## reads from either source without the caller caring. `path` is
+## the canonical resource locator (without the query string);
+## `query` is the raw `?…` suffix verbatim (empty when absent).
+## `headers` is lowercased on insertion by `Rondo` so handler-side
+## lookups are case-insensitive in the conventional way.
+class Request
+  method: String
+  path: String
+  query: String
+  headers: Map[String, String]
+  body: String
+  params: Map[String, String]
+  cookies: Map[String, String]
+
+  def init
+    self.method = "GET"
+    self.path = "/"
+    self.query = ""
+    self.headers = Map.new
+    self.body = ""
+    self.params = Map.new
+    self.cookies = Map.new
+  end
+
+  ## Cookie lookup. Returns `None` if the cookie isn't set.
+  def cookie(name: &String) -> Option[String]
+    self.cookies.get(name)
+  end
+
+  ## Construct a request from raw parts. Mostly useful for tests —
+  ## the future TCP path will build this internally.
+  def self.build(method: &String, path: &String, body: &String) -> Request
+    var r = Request.new
+    r.method = method.clone
+    r.path = path.clone
+    r.body = body.clone
+    r
+  end
+
+  ## Parse a raw HTTP/1.x request string into a `Request`.
+  ##
+  ## Accepts `<METHOD> <PATH> <HTTP-VERSION>\r\n<headers>\r\n\r\n<body>`.
+  ## Returns `None` on malformed input (missing request line, fewer
+  ## than 3 tokens on the request line, header parse failure). The
+  ## body is everything after the `\r\n\r\n` separator, taken
+  ## verbatim — query string and form parsing are left to handlers.
+  ##
+  ## Header names are lowercased on insertion to match Sinatra's
+  ## case-insensitive `request.headers["..."]` lookup behaviour.
+  def self.parse(raw: &String) -> Option[Request]
+    let head_body = raw.split(&"\r\n\r\n")
+    let head = segment_at(&head_body, 0)
+    let body = rebuild_body(&head_body)
+
+    let lines = head.split(&"\r\n")
+    let line_count: Int = lines.len() as Int
+    if line_count == 0
+      return None
+    end
+
+    # Request line: "METHOD PATH VERSION"
+    let req_line = segment_at(&lines, 0)
+    let parts = req_line.split(&" ")
+    if (parts.len() as Int) < 3
+      return None
+    end
+
+    var r = Request.new
+    r.method = segment_at(&parts, 0)
+    let path_with_query = segment_at(&parts, 1)
+    split_path_query_into(&path_with_query, &var r)
+    r.body = body
+
+    # Remaining lines are header lines.
+    var i: Int = 1
+    while i < line_count
+      let line = segment_at(&lines, i)
+      if line.len() > 0
+        parse_header_into(&line, &var r.headers)
+      end
+      i = i + 1
+    end
+
+    # Cookie header → req.cookies map. The Cookie header (singular
+    # in HTTP/1.1) carries `name=value; name=value; …`. We don't
+    # URL-decode here for the same reason `parse_query_into` doesn't.
+    let cookie_hdr = r.headers.get(&"cookie")
+    if cookie_hdr.is_some()
+      let cookies_str = cookie_hdr.unwrap()
+      parse_cookies_into(cookies_str, &var r.cookies)
+    end
+
+    Some(r)
+  end
+
+  ## Header lookup. Returns `None` if the header is absent.
+  def header(name: &String) -> Option[String]
+    self.headers.get(name)
+  end
+
+  ## Captured route parameter (e.g. `:id` in `/users/:id`).
+  def param(name: &String) -> Option[String]
+    self.params.get(name)
+  end
+end

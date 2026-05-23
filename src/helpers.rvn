@@ -1,0 +1,181 @@
+## Pure free helpers used across Rondo. Primitive-only signatures so
+## they sit at the top of the dependency graph — no forward references
+## to `Request` / `Response` / `Route` / `Rondo` here.
+
+# Pure free helper: extract one segment from an Array[String] by
+# index, returning the empty string on miss. Kept as a free fn so
+# `Route.matches` can call it without nesting a `match` inside a
+# multi-statement arm body (which doesn't parse cleanly today).
+def segment_at(segs: &Array[String], i: Int) -> String
+  match segs.get(i)
+    Some(s) -> s.clone
+    None    -> ""
+  end
+end
+
+# Re-join `parts[1..]` with `?` so a query string containing
+# additional `?` characters (rare, but legal under RFC 3986) is
+# preserved verbatim instead of truncated at the first delimiter.
+def take_after_question(parts: &Array[String]) -> String
+  let n: Int = parts.len() as Int
+  var out: String = ""
+  var i: Int = 1
+  while i < n
+    if i > 1
+      out = out + "?"
+    end
+    out = out + segment_at(parts, i)
+    i = i + 1
+  end
+  out
+end
+
+# Copy each entry from `src` onto `dst`. Used by Rondo.dispatch
+# to overlay path captures on top of query-string params (captures
+# win on key collision because they're inserted last).
+def merge_params_into(src: &Map[String, String], dst: &var Map[String, String])
+  let ks = src.keys()
+  let n: Int = ks.len() as Int
+  var i: Int = 0
+  while i < n
+    match ks.get(i)
+      Some(k) -> copy_one_param(&k, src, dst)
+      None    -> 0
+    end
+    i = i + 1
+  end
+end
+
+def copy_one_param(name: &String, src: &Map[String, String], dst: &var Map[String, String])
+  match src.get(name)
+    Some(v) -> dst.insert(name.clone, v.clone)
+    None    -> 0
+  end
+end
+
+# Parse a URL-encoded query string ("foo=bar&baz=qux") into the
+# params map. URL-decoding is deliberately NOT performed in v0.2:
+# Rondo passes the raw segments through, leaving %-decoding to a
+# future helper (or to handlers that need it). Sinatra defers
+# decoding to a Rack middleware too.
+def parse_query_into(query: &String, params: &var Map[String, String])
+  let pairs = query.split(&"&")
+  let n: Int = pairs.len() as Int
+  var i: Int = 0
+  while i < n
+    let pair = segment_at(&pairs, i)
+    insert_query_pair(&pair, params)
+    i = i + 1
+  end
+end
+
+# Split one `name=value` chunk and stash it. Pairs with no `=`
+# (`?flag`) are inserted with an empty-string value, matching
+# Sinatra's behaviour. Empty `name` is dropped silently.
+def insert_query_pair(pair: &String, params: &var Map[String, String])
+  if pair.len() > 0
+    let kv = pair.split(&"=")
+    let name = segment_at(&kv, 0)
+    if name.len() > 0
+      let value = if (kv.len() as Int) > 1
+        segment_at(&kv, 1)
+      else
+        String.new
+      end
+      params.insert(name, value)
+    end
+  end
+end
+
+# Parse a Cookie header ("name1=value1; name2=value2; …") into
+# the cookies map. Splits on `;`, trims each pair, splits on the
+# first `=`. Pairs without `=` are treated as a flag (empty
+# value); empty names are dropped. Matches Sinatra's
+# `Rack::Cookies` lenience.
+def parse_cookies_into(raw: &String, cookies: &var Map[String, String])
+  let pairs = raw.split(&";")
+  let n: Int = pairs.len() as Int
+  var i: Int = 0
+  while i < n
+    let pair = segment_at(&pairs, i)
+    let trimmed = pair.trim
+    if trimmed.len() > 0
+      stash_cookie_pair(&trimmed, cookies)
+    end
+    i = i + 1
+  end
+end
+
+def stash_cookie_pair(pair: &String, cookies: &var Map[String, String])
+  let parts = pair.split(&"=")
+  let name = segment_at(&parts, 0)
+  if name.len() > 0
+    let value = if (parts.len() as Int) > 1
+      segment_at(&parts, 1)
+    else
+      String.new
+    end
+    cookies.insert(name, value)
+  end
+end
+
+# Parse one header line ("Name: value") and stash it into
+# `headers`. Header names are lowercased on insertion so
+# handler-side lookups are case-insensitive (matches the
+# convention in Sinatra's `request.headers["Content-Type"]`).
+# Returns true when a header was parsed, false if the line had no
+# colon (in which case the line is silently dropped — same
+# behaviour as net/http's parser for malformed lines).
+def parse_header_into(line: &String, headers: &var Map[String, String]) -> Bool
+  match line.find(&":")
+    Some(_idx) ->
+      let pair = line.split(&":")
+      let raw_name = segment_at(&pair, 0)
+      let raw_value = segment_at(&pair, 1)
+      headers.insert(raw_name.to_lower, raw_value.trim)
+      true
+    None -> false
+  end
+end
+
+# Reconstruct the body when the wire format had a literal "\r\n\r\n"
+# inside it (rare but legal — e.g. a base64-encoded payload that
+# happens to contain it). `split` collapses consecutive separators,
+# so we join slots [1..] back together with "\r\n\r\n" between.
+def rebuild_body(slots: &Array[String]) -> String
+  let n: Int = slots.len() as Int
+  if n <= 1
+    ""
+  else
+    var acc: String = ""
+    var i: Int = 1
+    while i < n
+      if i > 1
+        acc = acc + "\r\n\r\n"
+      end
+      acc = acc + segment_at(slots, i)
+      i = i + 1
+    end
+    acc
+  end
+end
+
+# Map an HTTP status code to its canonical reason phrase. Covers
+# the handful Rondo uses by default; unknown codes fall through to
+# "OK" so the wire format stays well-formed.
+def reason_phrase(status: Int) -> String
+  match status
+    200 -> "OK"
+    201 -> "Created"
+    204 -> "No Content"
+    301 -> "Moved Permanently"
+    302 -> "Found"
+    400 -> "Bad Request"
+    401 -> "Unauthorized"
+    403 -> "Forbidden"
+    404 -> "Not Found"
+    405 -> "Method Not Allowed"
+    500 -> "Internal Server Error"
+    _   -> "OK"
+  end
+end
