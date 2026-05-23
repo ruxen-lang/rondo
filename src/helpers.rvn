@@ -160,6 +160,28 @@ def rebuild_body(slots: &Array[String]) -> String
   end
 end
 
+# Pull the request method ("GET" / "HEAD" / …) off the first line
+# of the raw request head. Defaults to "GET" on a malformed head.
+def extract_method(raw: &String) -> String
+  let lines = raw.split(&"\r\n")
+  let first = segment_at(&lines, 0)
+  let parts = first.split(&" ")
+  if (parts.len() as Int) >= 1
+    segment_at(&parts, 0)
+  else
+    String.from(&"GET")
+  end
+end
+
+# Slice the serialized response down to (status line + headers +
+# empty separator). Body bytes after `\r\n\r\n` are discarded —
+# the head block's Content-Length still reflects the GET-shape
+# byte count, matching RFC 9110 §9.3.2 for HEAD.
+def head_only_wire(full: &String) -> String
+  let parts = full.split(&"\r\n\r\n")
+  segment_at(&parts, 0) + "\r\n\r\n"
+end
+
 # Map an HTTP status code to its canonical reason phrase. Covers
 # the handful Rondo uses by default; unknown codes fall through to
 # "OK" so the wire format stays well-formed.

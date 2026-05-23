@@ -38,13 +38,20 @@
 ## - `request.rvn`     — `Request` class
 ## - `response.rvn`    — `Response` class
 ## - `route.rvn`       — `Route` class
-## - `rondo.rvn`       — `Rondo` class (registration DSL + dispatch)
+## - `rondo.rvn`       — `Rondo` class (registration DSL + dispatch
+##                       + the public `listen(addr, workers)` entry)
 ## - `router.rvn`      — late-binding helpers (signatures reference
 ##                       user types)
-## - `sync_server.rvn` — synchronous TCP server (`listen`,
-##                       `listen_threaded` + `handle_one`)
-## - `async_server.rvn` — async TCP server (`listen_async`,
-##                        `listen_async_multi`)
+## - `async_server.rvn` — async TCP server: per-worker reactor +
+##                        keep-alive request loop
+##
+## ## Architecture
+##
+## Thread-per-core: `listen(addr, N)` spawns N OS threads, each
+## running its own async event loop bound to the same port via
+## SO_REUSEPORT. The kernel load-balances accepts. Connections
+## are persistent (HTTP/1.1 keep-alive). Same shape as nginx /
+## envoy / monoio.
 ##
 ## Note: String, Array, Map, Option, Result are all in the Riven
 ## prelude — no `use` needed.

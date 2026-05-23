@@ -211,45 +211,18 @@ class Rondo
     resp
   end
 
-  ## Bind to the address and serve until interrupted. Synchronous,
-  ## single-threaded, one connection at a time.
-  def listen(addr: &String) -> Result[(), String]
-    match TcpListener.bind(addr)
-      Ok(listener) -> serve_forever(self, listener, addr)
-      Err(_)       -> Err(String.from(&"rondo: bind failed"))
-    end
-  end
-
-  ## Thread-per-connection variant of `listen`. Each accepted TCP
-  ## stream is handed to a fresh OS thread via `Thread.spawn`; the
-  ## main thread immediately returns to `accept`. Matches Puma's
-  ## threaded model (Sinatra's default production server). Same
-  ## route/hook/error-handler semantics as `listen` — only the
-  ## I/O scheduling changes.
-  def listen_threaded(addr: &String) -> Result[(), String]
-    match TcpListener.bind(addr)
-      Ok(listener) -> serve_forever_threaded(self, listener, addr)
-      Err(_)       -> Err(String.from(&"rondo: bind failed"))
-    end
-  end
-
-  ## Single-threaded async variant. Uses std.async_net + block_on
-  ## for non-blocking I/O on one OS thread. Connections are served
-  ## serially through async-shaped futures.
-  def listen_async(addr: &String) -> Result[(), String]
-    let bound = block_on(AsyncTcpListener.bind(addr))
-    match bound
-      Ok(listener) -> async_serve_loop(self, listener, addr)
-      Err(_)       -> Err(String.from(&"rondo: bind failed"))
-    end
-  end
-
-  ## Multi-worker async — N OS threads, each running its own
-  ## `block_on(serve_loop)` with its own per-thread reactor, all
-  ## bound to the same port via SO_REUSEPORT. The kernel
-  ## load-balances incoming connections across the worker
-  ## bindings.
-  def listen_async_multi(addr: &String, workers: Int) -> Result[(), String]
+  ## Bind to the address and serve until interrupted.
+  ##
+  ## Thread-per-core async event loop. `workers` OS threads each
+  ## bind the same port via SO_REUSEPORT and run their own
+  ## per-thread reactor; the kernel hashes incoming connections
+  ## across the worker bindings. Connections are persistent
+  ## (HTTP/1.1 keep-alive by default).
+  ##
+  ## Pick `workers` to roughly match the machine's perf-core
+  ## count. 4 is a reasonable default for an M-series Mac; on a
+  ## Linux server, 1 per CPU is the nginx/envoy convention.
+  def listen(addr: &String, workers: Int) -> Result[(), String]
     spawn_async_workers(self, addr, workers)
   end
 end
