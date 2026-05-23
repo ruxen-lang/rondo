@@ -1,24 +1,53 @@
 ## One method+pattern pair with its handler. The framework user
 ## rarely touches this directly — `Rondo.get` / `Rondo.post` / etc.
 ## construct routes for you.
+##
+## Internal: the pattern is pre-split into `pat_segs` at
+## construction and a parallel `param_names` array holds the
+## `:`-prefix stripped capture name per segment (empty string when
+## the segment isn't a capture). Both arrays are read once per
+## request inside `matches` — this avoids the per-request
+## pattern.split + per-segment replace cost the v0.x implementation
+## paid.
 class Route
   method: String
   pattern: String
+  pat_segs: Array[String]
+  param_names: Array[String]
+  has_captures: Bool
   handler: any Fn(&Request) -> Response
 
   def init(method: &String, pattern: &String, handler: any Fn(&Request) -> Response)
     self.method = method.clone
     self.pattern = pattern.clone
     self.handler = handler
+    self.pat_segs = pattern.split(&"/")
+    var names: Array[String] = Array.new
+    var seen_capture: Bool = false
+    let n: Int = self.pat_segs.len() as Int
+    var i: Int = 0
+    while i < n
+      let seg = segment_at(&self.pat_segs, i)
+      if seg.starts_with(&":")
+        let _x = 0
+        names.push(seg.replace(&":", &""))
+        seen_capture = true
+      else
+        names.push("")
+      end
+      i = i + 1
+    end
+    self.param_names = names
+    self.has_captures = seen_capture
   end
 
   ## Does this route match the incoming request?
   ##
-  ## Splits both `self.pattern` and `req.path` on `/`. For each
-  ## segment pair: if the pattern segment starts with `:`, capture
-  ## the path segment into the params map; otherwise the pair must
-  ## match exactly. Returns `Some(captures)` on a hit (empty map
-  ## when no `:name` segments), `None` on a miss.
+  ## For each segment pair: if `param_names[i]` is non-empty, the
+  ## segment is a capture and the path segment becomes the captured
+  ## value; otherwise the pair must compare equal. Returns
+  ## `Some(captures)` on a hit (the map is empty when the pattern
+  ## has no `:`-segments), `None` on a miss.
   ##
   ## Examples (after `Route.new("GET", "/users/:id/posts/:post_id", _)`):
   ##   GET /users/42/posts/7  →  Some({id: "42", post_id: "7"})
@@ -30,9 +59,8 @@ class Route
       return None
     end
 
-    let pat_segs = self.pattern.split(&"/")
     let path_segs = req.path.split(&"/")
-    let pn: Int = pat_segs.len() as Int
+    let pn: Int = self.pat_segs.len() as Int
     let xn: Int = path_segs.len() as Int
     if pn != xn
       return None
@@ -41,17 +69,14 @@ class Route
     var captures: Map[String, String] = Map.new
     var i: Int = 0
     var ok: Bool = true
-    # Each iteration matches one segment pair. Riven match arms are
-    # single-expression unless the body starts with a statement
-    # keyword, so we inline the per-segment work via a string-equal
-    # check rather than nested matches — every arm yields a Bool.
     while i < pn
       if ok
-        let pseg_str = segment_at(&pat_segs, i)
+        let name = segment_at(&self.param_names, i)
         let xseg_str = segment_at(&path_segs, i)
-        if pseg_str.starts_with(&":")
-          captures.insert(pseg_str.replace(&":", &""), xseg_str.clone)
+        if name.len() > 0
+          captures.insert(name, xseg_str.clone)
         else
+          let pseg_str = segment_at(&self.pat_segs, i)
           if pseg_str != xseg_str
             ok = false
           end

@@ -66,8 +66,9 @@ end
 # Static-file fallback: when no route matched, try to load
 # `<public_folder>/<path>` from disk. Returns 404 when the
 # public folder is unset, the file doesn't exist, or the read
-# fails. Successful reads come back as text/plain — content-
-# type detection is a v0.8 polish item.
+# fails. The Content-Type is derived from the file extension
+# (see `mime_type_for`) — defaults to application/octet-stream
+# for unknown extensions, same as Rack::Mime.
 def try_static_or_404(public_folder: &String, path: &String) -> Response
   if public_folder.len() == 0
     return Response.not_found()
@@ -79,15 +80,65 @@ def try_static_or_404(public_folder: &String, path: &String) -> Response
   end
   let full = public_folder.clone + path.clone
   match File.open(&full)
-    Ok(f) -> serve_open_file(f)
+    Ok(f) -> serve_open_file(f, path)
     Err(_) -> Response.not_found()
   end
 end
 
-def serve_open_file(f: File) -> Response
+def serve_open_file(f: File, path: &String) -> Response
   match f.read_to_string
-    Ok(body) -> Response.text(&body)
-    Err(_)   -> Response.internal_error()
+    Ok(body) ->
+      let ct = mime_type_for(path)
+      let _x = 0
+      Response.text(&body).with_header(&"content-type", &ct)
+    Err(_) -> Response.internal_error()
+  end
+end
+
+# Map a file extension to a Content-Type. Covers the common web-
+# asset types served from a `public/` folder. Falls back to
+# application/octet-stream for unknown extensions — same default
+# as Rack::Mime when no entry matches.
+#
+# We split the path on "." and pull the last segment as the
+# extension, then dispatch on the lower-cased value. A path with
+# no `.` (e.g. `/readme`) lands on the `_` arm; multi-suffix
+# paths like `foo.tar.gz` use just the trailing extension, so
+# `.tar.gz` resolves to gzip — matches nginx's mime.types default.
+def mime_type_for(path: &String) -> String
+  let lower = path.to_lower
+  let parts = lower.split(&".")
+  let n = parts.len() as Int
+  let ext = if n > 1
+    segment_at(&parts, n - 1)
+  else
+    ""
+  end
+  match ext
+    "html" -> "text/html; charset=utf-8"
+    "htm"  -> "text/html; charset=utf-8"
+    "css"  -> "text/css; charset=utf-8"
+    "js"   -> "application/javascript; charset=utf-8"
+    "mjs"  -> "application/javascript; charset=utf-8"
+    "json" -> "application/json"
+    "xml"  -> "application/xml"
+    "svg"  -> "image/svg+xml"
+    "png"  -> "image/png"
+    "jpg"  -> "image/jpeg"
+    "jpeg" -> "image/jpeg"
+    "gif"  -> "image/gif"
+    "webp" -> "image/webp"
+    "ico"  -> "image/x-icon"
+    "woff2" -> "font/woff2"
+    "woff" -> "font/woff"
+    "ttf"  -> "font/ttf"
+    "pdf"  -> "application/pdf"
+    "gz"   -> "application/gzip"
+    "tgz"  -> "application/gzip"
+    "zip"  -> "application/zip"
+    "txt"  -> "text/plain; charset=utf-8"
+    "md"   -> "text/plain; charset=utf-8"
+    _      -> "application/octet-stream"
   end
 end
 

@@ -131,8 +131,22 @@ class Response
   ##   \r\n
   ##   <body>
   def to_http -> String
-    var out: String = "HTTP/1.1 #{self.status} #{reason_phrase(self.status)}\r\n"
-    out = out + "Content-Length: #{self.body.len()}\r\n"
+    # Pre-size the output buffer. A typical small response is the
+    # status line (~30 B) + ~5 headers (~30 B each) + CRLF + body.
+    # 256 + body covers the common case in one allocation; push_str
+    # then appends in-place. The previous `out = out + …` shape
+    # allocated a fresh buffer on every concat — quadratic in the
+    # number of headers.
+    let body_len: Int = self.body.len() as Int
+    var out: String = String.with_capacity(256 + body_len)
+    out.push_str(&"HTTP/1.1 ")
+    out.push_str(&"#{self.status}")
+    out.push_str(&" ")
+    out.push_str(&reason_phrase(self.status))
+    out.push_str(&"\r\n")
+    out.push_str(&"Content-Length: ")
+    out.push_str(&"#{body_len}")
+    out.push_str(&"\r\n")
 
     let ks = self.headers.keys()
     let kn: Int = ks.len() as Int
@@ -152,15 +166,21 @@ class Response
       # back out and emits as `Set-Cookie: <name>=<value>`.
       if name.starts_with(&"set-cookie:")
         let cookie_name = name.replace(&"set-cookie:", &"")
-        out = out + "Set-Cookie: #{cookie_name}=#{value}\r\n"
+        out.push_str(&"Set-Cookie: ")
+        out.push_str(&cookie_name)
+        out.push_str(&"=")
+        out.push_str(&value)
       else
-        out = out + "#{name}: #{value}\r\n"
+        out.push_str(&name)
+        out.push_str(&": ")
+        out.push_str(&value)
       end
+      out.push_str(&"\r\n")
       i = i + 1
     end
 
-    out = out + "\r\n"
-    out = out + self.body
+    out.push_str(&"\r\n")
+    out.push_str(&self.body)
     out
   end
 end

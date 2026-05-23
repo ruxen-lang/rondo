@@ -106,4 +106,32 @@ class Request
   def param(name: &String) -> Option[String]
     self.params.get(name)
   end
+
+  ## Parse the body as `application/x-www-form-urlencoded` and
+  ## return the field map. Returns an empty map when the content
+  ## type doesn't match (Sinatra's `params` would also be empty)
+  ## or the body is empty. Same parser as the query string —
+  ## `name=value&name=value`, no URL decoding in v0.x.
+  ##
+  ## ```riven
+  ## app.post(&"/login", { |req: &Request|
+  ##   let fields = req.form
+  ##   match fields.get(&"username")
+  ##     Some(u) -> Response.text(&"hi #{u}")
+  ##     None    -> Response.text(&"missing username").with_status(400)
+  ##   end
+  ## })
+  ## ```
+  def form -> Map[String, String]
+    var out: Map[String, String] = Map.new
+    let ct = match self.headers.get(&"content-type")
+      Some(v) -> v
+      None    -> ""
+    end
+    if !ct.starts_with(&"application/x-www-form-urlencoded")
+      return out
+    end
+    parse_query_into(&self.body, &var out)
+    out
+  end
 end
