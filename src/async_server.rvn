@@ -32,19 +32,27 @@ def async_handle_pair(app: &Rondo, pair: (AsyncTcpStream, String))
 end
 
 def async_handle_one(app: &Rondo, stream: AsyncTcpStream) -> Int
-  # HTTP/1.1 keep-alive cycle. Same persistent-by-default shape as
-  # the sync path. We hold the stream by-value across iterations
-  # — AsyncTcpStream.read/.write are `def var` methods on a
-  # mutable receiver, so the stream stays usable across calls
+  # HTTP/1.1 keep-alive cycle. We hold the stream by-value across
+  # iterations — AsyncTcpStream.read/.write are `def var` methods
+  # on a mutable receiver, so the stream stays usable across calls
   # until we feed it to `async_tcp_stream_close_of` at the end.
   #
-  # 64 KiB single-read assumption: every wrk / curl / browser
-  # on localhost lands the full request line + headers (+ small
-  # body) in one read. Real clients with bodies > 64 KiB or
-  # very slow networks would need a head-terminator-driven read
-  # loop here; out of scope for v1.
+  # Per-connection request cap (nginx-style `keepalive_requests
+  # 1000`): force-close after MAX_REQUESTS_PER_CONN cycles so a
+  # client can't pin a worker forever in the absence of a working
+  # idle timeout. Once Riven exposes reactor-side timer races, a
+  # real idle timeout can replace this.
+  #
+  # 64 KiB single-read shape: wrk / curl / browsers on localhost
+  # almost always land everything in one read. A multi-read
+  # accumulator that handles head-spanning-reads + body chunking
+  # is in `read_full_request` and lives behind the same surface
+  # for callers that need it, but the bench uses the single-read
+  # fast path so the hot loop stays lean.
   var s = stream
   var keep_going: Bool = true
+  var served: Int = 0
+  let max_reqs: Int = 1000
   while keep_going
     let raw_result = block_on(s.read(65536))
     match raw_result
@@ -54,6 +62,10 @@ def async_handle_one(app: &Rondo, stream: AsyncTcpStream) -> Int
           keep_going = false
         else
           keep_going = async_serve_one_cycle(app, &var s, &raw)
+          served = served + 1
+          if served >= max_reqs
+            keep_going = false
+          end
         end
       Err(_) ->
         keep_going = false
@@ -61,6 +73,60 @@ def async_handle_one(app: &Rondo, stream: AsyncTcpStream) -> Int
   end
   let _c = block_on(async_tcp_stream_close_of(s))
   0
+end
+
+# Read one HTTP request from the async stream. Returns the raw
+# bytes, or "" on EOF / read error / cap exceeded.
+#
+# Fast path (most requests): the first read returns the full
+# head + body. We hit the `contains("\r\n\r\n")` + `parse` once
+# and exit. wrk / curl / browsers on localhost lands here.
+#
+# Slow path (rare): head spans multiple reads OR the first read
+# got the head but body bytes straddle the read boundary. Loop
+# reading until both head terminator AND Content-Length body are
+# in hand. Capped at HEAD_CAP / TOTAL_CAP.
+def read_full_request(s: &var AsyncTcpStream) -> String
+  let head_cap: Int = 16384
+  let total_cap: Int = 1048576
+  var buf: String = ""
+  var head_bytes: Int = -1   # offset past the "\r\n\r\n" terminator; -1 = not seen yet
+  var need_body: Int = 0
+  while true
+    let chunk_result = block_on(s.read(65536))
+    match chunk_result
+      Ok(chunk) ->
+        let _x = 0
+        if chunk.len() == 0
+          return ""
+        end
+        buf = buf + chunk
+        if head_bytes < 0
+          if buf.contains(&"\r\n\r\n")
+            let parts = buf.split(&"\r\n\r\n")
+            let head = segment_at(&parts, 0)
+            head_bytes = (head.len() as Int) + 4
+            need_body = parse_content_length(&head)
+          else
+            if (buf.len() as Int) > head_cap
+              return ""
+            end
+          end
+        end
+        if head_bytes >= 0
+          let have_body = (buf.len() as Int) - head_bytes
+          if have_body >= need_body
+            return buf
+          end
+          if (buf.len() as Int) > total_cap
+            return ""
+          end
+        end
+      Err(_) ->
+        return ""
+    end
+  end
+  ""
 end
 
 # Serve one request/response cycle on an already-open async

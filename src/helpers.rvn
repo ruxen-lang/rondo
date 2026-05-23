@@ -160,6 +160,35 @@ def rebuild_body(slots: &Array[String]) -> String
   end
 end
 
+# Walk a parsed head, find a `Content-Length: <int>` header (case
+# preserved on the wire, lowercased on insertion), parse it as Int.
+# Returns 0 when absent / malformed. Used by the async server's
+# multi-read accumulator to decide when a request body is complete.
+def parse_content_length(head: &String) -> Int
+  let lines = head.split(&"\r\n")
+  let n: Int = lines.len() as Int
+  var i: Int = 0
+  var result: Int = 0
+  while i < n
+    let line = segment_at(&lines, i)
+    let lower = line.to_lower
+    if lower.starts_with(&"content-length:")
+      let parts = line.split(&":")
+      let raw = segment_at(&parts, 1)
+      # Bind trim + parse to locals so the borrow on `raw.trim` ends
+      # before the match arm bodies assign to `result`.
+      let trimmed = raw.trim
+      let parsed = trimmed.parse_int()
+      match parsed
+        Ok(v)  -> result = v
+        Err(_) -> result = 0
+      end
+    end
+    i = i + 1
+  end
+  result
+end
+
 # Pull the request method ("GET" / "HEAD" / …) off the first line
 # of the raw request head. Defaults to "GET" on a malformed head.
 def extract_method(raw: &String) -> String
