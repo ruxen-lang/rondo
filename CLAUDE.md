@@ -64,7 +64,11 @@ The `Rondo.dispatch` pipeline in `rondo.rvn` is the single most important piece 
 
 ### Current bench shape
 
-On M-series macOS, single-route GET, 4-worker `listen("127.0.0.1:8421", 4)`, wrk 4t/200c/15s: **~51 k RPS, 18 µs p50, 27 µs p99.** Keep-alive on; no per-request handshake or close. Each request takes 3 `block_on` calls (read → write; close fires only when the client requests it). The bench is currently CPU-bound on Riven's per-cycle work, not on syscalls or scheduler design — see `docs/research/async-threading-best-practices.md` for the v2 roadmap that pushes this toward axum/hyper-class numbers (persistent fd registration, real wakers, etc.).
+On M-series macOS, single-route GET, 4-worker `listen("127.0.0.1:8421", 4)`, wrk 4t/200c/15s: **~56 k RPS, 17 µs p50, 25 µs p99, zero timeouts.** Keep-alive on; no per-request handshake or close. Each request is read + dispatch + write; the close future only fires when the client requests it.
+
+Reactor uses persistent fd registration with edge-triggered readiness (`EV_CLEAR` / `EPOLLET`) — the stream registers once at accept and deregisters at drop, so per-request register/deregister syscalls are gone. This is the tokio `AsyncFd` shape.
+
+The bench is now CPU-bound on per-request work (parsing, dispatch, serialization), not on connection management. Stable across c=50 to c=800 connections — adding load doesn't change the ceiling because each worker runs one task at a time. The remaining lever for higher RPS is `task::spawn` per connection (multiple in-flight requests per worker); that's a v2 runtime feature. See `docs/research/async-threading-best-practices.md` for the broader v2 roadmap (real wakers, etc.).
 
 ## Riven compiler workarounds — read before editing
 
@@ -84,7 +88,7 @@ Workarounds W7 and W8 (dotted-class FFI aliases, no bytes→String) are document
 
 - **W16 — Tuple returns of FFI-owning classes double-drop.** A helper that takes ownership of a `TcpStream` and returns `(TcpStream, Bool)` leaks ownership: both the tuple's stored stream and the caller's reassigned binding try to drop, double-closing the fd and SIGSEGV'ing on the second iteration. Use `Option[T]` instead (`Some(stream)` keeps ownership transfer clean through unwrap). Documented in the `handle_one` history; this is why the sync-server keepalive path was reverted to close-per-request.
 - **W17 — FFI-bound `def drop` doesn't always fire for class fields of a future.** `AsyncCloseFuture.stream` had a `def drop as "riven_async_tcp_stream_drop"` but the field's drop wasn't invoked when the future itself dropped, leaking the fd. Workaround: make the explicit `close` method do the fd close, not just `shutdown`. Fixed in riven `1b888b8`.
-- **W18 — Many keep-alive iterations on a single async TCP connection eventually crash the worker.** Symptom: a connection that serves many hundreds of cycles destabilises the server process (suspect accumulated per-iteration state in the executor's reactor or AsyncTcpStream drop elaboration). Workaround: cap iterations per connection (`max_reqs = 1000` in `async_handle_one`). Replace with a real reactor-side idle timeout once that lands.
+- **W18 — Many keep-alive iterations on a single async TCP connection eventually crash the worker.** Symptom: a connection that serves many hundreds of cycles destabilises the server process. Root cause was per-cycle kqueue/epoll register-deregister churn accumulating reactor-slot state. **Fixed in riven `c6f1e2d`** (persistent fd registration on AsyncTcpStream / Listener — registration lives for the stream's lifetime, edge-triggered). The per-connection request cap workaround in `async_handle_one` was removed in rondo after this landed.
 
 When you encounter a *new* compiler quirk, add an entry to `docs/riven-issues.md` (W-series for workarounds in code, F-series for fixes committed upstream).
 

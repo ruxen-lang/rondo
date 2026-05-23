@@ -51,8 +51,6 @@ def async_handle_one(app: &Rondo, stream: AsyncTcpStream) -> Int
   # fast path so the hot loop stays lean.
   var s = stream
   var keep_going: Bool = true
-  var served: Int = 0
-  let max_reqs: Int = 1000
   while keep_going
     let raw_result = block_on(s.read(65536))
     match raw_result
@@ -62,10 +60,6 @@ def async_handle_one(app: &Rondo, stream: AsyncTcpStream) -> Int
           keep_going = false
         else
           keep_going = async_serve_one_cycle(app, &var s, &raw)
-          served = served + 1
-          if served >= max_reqs
-            keep_going = false
-          end
         end
       Err(_) ->
         keep_going = false
