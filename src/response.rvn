@@ -93,9 +93,51 @@ class Response
   ## repeated calls (Sinatra-style; Map.insert overwrites today
   ## so we shim per-call via a numeric suffix on the storage key —
   ## the wire-emission strips the suffix in `to_http`).
+  ##
+  ## Bare cookie — no security attributes. Fine for non-sensitive
+  ## state (UI preferences, etc). For anything that authenticates
+  ## a user or carries a session ID, use `with_secure_cookie`
+  ## (or `with_cookie_attrs` for finer control).
   def var with_cookie(name: &String, value: &String) -> Response
     let key = "set-cookie:" + name.clone
     self.headers.insert(key, value.clone)
+    self
+  end
+
+  ## Production-grade session cookie: `HttpOnly; Secure;
+  ## SameSite=Lax`. These three attributes are the OWASP-recommended
+  ## defaults for session-id / auth-token cookies. Browsers will:
+  ##   * refuse to expose the cookie to JS (HttpOnly), neutering XSS
+  ##     exfiltration of session tokens.
+  ##   * only send the cookie over HTTPS (Secure).
+  ##   * not send the cookie on cross-site top-level POSTs
+  ##     (SameSite=Lax), neutering most CSRF attacks while still
+  ##     allowing GET-driven cross-site navigation.
+  ##
+  ## Use this for `session`, `auth_token`, `csrf_token`, etc.
+  def var with_secure_cookie(name: &String, value: &String) -> Response
+    let key = "set-cookie:" + name.clone
+    let combined = value.clone + "; HttpOnly; Secure; SameSite=Lax"
+    self.headers.insert(key, combined)
+    self
+  end
+
+  ## Cookie with an explicit attribute string. Example:
+  ##
+  ## ```riven
+  ## resp.with_cookie_attrs(&"prefs", &"dark", &"Max-Age=2592000; Path=/")
+  ## ```
+  ##
+  ## Emits `Set-Cookie: prefs=dark; Max-Age=2592000; Path=/`. The
+  ## attrs string is appended verbatim after `; `; you are
+  ## responsible for forming a valid RFC 6265 attribute list. Common
+  ## attributes: `Max-Age=<secs>`, `Expires=<rfc1123-date>`,
+  ## `Path=<url-prefix>`, `Domain=<host>`, `Secure`, `HttpOnly`,
+  ## `SameSite=Strict|Lax|None`.
+  def var with_cookie_attrs(name: &String, value: &String, attrs: &String) -> Response
+    let key = "set-cookie:" + name.clone
+    let combined = value.clone + "; " + attrs.clone
+    self.headers.insert(key, combined)
     self
   end
 
