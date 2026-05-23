@@ -46,17 +46,18 @@ def run_request(app: &Rondo, stream: TcpStream) -> Int
   0
 end
 
-# One request/response cycle on a single TCP connection.
-# Reads request line + headers via BufReader.Tcp, parses through
-# Request.parse, dispatches through the app's route table, and
-# writes the serialized Response back to the stream.
+# One request/response cycle on a single TCP connection. Sync
+# mode stays close-per-request; the keepalive win lives on the
+# async path. Reason: BufReader.Tcp slurps multi-request bursts
+# into its internal buffer; into_inner between cycles throws those
+# bytes away, so any client that fires the next request before
+# we've called into_inner (wrk, ab) loses data and the server
+# stalls. A raw-read path bypassing BufReader would fix it; not
+# worth the implementation cost given async-multi is the clear
+# winner on the bench.
 def handle_one(app: &Rondo, stream: TcpStream)
   var br = BufReader.Tcp.new(stream)
   let head = read_request_head(&var br)
-  # Pull Content-Length out of the head block (lowercased on
-  # insert by parse_header_into) and read that many additional
-  # bytes from the buffered stream as the body. Zero / missing
-  # Content-Length → no body, which is fine for GET/DELETE/HEAD.
   let body = read_request_body(&var br, &head)
   let raw = head + body
   let method = extract_method(&raw)
@@ -65,10 +66,6 @@ def handle_one(app: &Rondo, stream: TcpStream)
     None      -> Response.text(&"bad request").with_status(400)
   end
   let full_wire = resp.to_http
-  # HEAD: send the head block + the empty CRLF separator only,
-  # with the Content-Length the GET would have reported. The
-  # serializer already computed that from `resp.body.len()`, so
-  # we just slice off everything after the `\r\n\r\n` marker.
   let wire = if method == "HEAD"
     head_only_wire(&full_wire)
   else
@@ -131,21 +128,27 @@ def parse_content_length(head: &String) -> Int
   let lines = head.split(&"\r\n")
   let n: Int = lines.len() as Int
   var i: Int = 0
-  var found: Int = 0
+  var result: Int = 0
   while i < n
     let line = segment_at(&lines, i)
     let lower = line.to_lower
     if lower.starts_with(&"content-length:")
       let parts = line.split(&":")
       let raw = segment_at(&parts, 1)
-      match raw.trim.parse_int()
-        Ok(v)  -> found = v
-        Err(_) -> found = 0
+      # Bind `trim` + `parse_int` to locals so their borrows end
+      # before the match arm bodies assign to `result`. Riven's
+      # borrow checker (post-2026-05) holds `raw.trim` live across
+      # the arm-body assignments when the chain is inline.
+      let trimmed = raw.trim
+      let parsed = trimmed.parse_int()
+      match parsed
+        Ok(v)  -> result = v
+        Err(_) -> result = 0
       end
     end
     i = i + 1
   end
-  found
+  result
 end
 
 # Read the request head block (request line + headers) until the

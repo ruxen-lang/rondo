@@ -32,34 +32,70 @@ def async_handle_pair(app: &Rondo, pair: (AsyncTcpStream, String))
 end
 
 def async_handle_one(app: &Rondo, stream: AsyncTcpStream) -> Int
-  # 64KB cap on a single read — the HTTP/1.1 standard max for
-  # the request line + headers + small bodies. Larger uploads
-  # would need a length-driven read loop; out of scope for the
-  # benchmark port.
+  # HTTP/1.1 keep-alive cycle. Same persistent-by-default shape as
+  # the sync path. We hold the stream by-value across iterations
+  # — AsyncTcpStream.read/.write are `def var` methods on a
+  # mutable receiver, so the stream stays usable across calls
+  # until we feed it to `async_tcp_stream_close_of` at the end.
+  #
+  # 64 KiB single-read assumption: every wrk / curl / browser
+  # on localhost lands the full request line + headers (+ small
+  # body) in one read. Real clients with bodies > 64 KiB or
+  # very slow networks would need a head-terminator-driven read
+  # loop here; out of scope for v1.
   var s = stream
-  let raw_result = block_on(s.read(65536))
-  match raw_result
-    Ok(raw) -> async_dispatch_and_write(app, s, raw)
-    Err(_)  -> 0
+  var keep_going: Bool = true
+  while keep_going
+    let raw_result = block_on(s.read(65536))
+    match raw_result
+      Ok(raw) ->
+        let _x = 0
+        if raw.len() == 0
+          keep_going = false
+        else
+          keep_going = async_serve_one_cycle(app, &var s, &raw)
+        end
+      Err(_) ->
+        keep_going = false
+    end
   end
+  let _c = block_on(async_tcp_stream_close_of(s))
+  0
 end
 
-def async_dispatch_and_write(app: &Rondo, stream: AsyncTcpStream, raw: String) -> Int
-  let method = extract_method(&raw)
-  let resp = match Request.parse(&raw)
-    Some(req) -> app.dispatch(req)
-    None      -> Response.text(&"bad request").with_status(400)
+# Serve one request/response cycle on an already-open async
+# stream. Returns true if the connection should stay open for
+# another cycle, false if we should close. Pulled out of the
+# loop body so the W1 multi-statement match arm above stays a
+# single expression per arm.
+def async_serve_one_cycle(app: &Rondo, s: &var AsyncTcpStream, raw: &String) -> Bool
+  let method = extract_method(raw)
+  var close_after: Bool = true
+  var resp: Response = Response.text(&"bad request").with_status(400)
+  match Request.parse(raw)
+    Some(req) ->
+      # Borrow-then-move: read the connection header off `req`
+      # FIRST (borrow), bind to a local Bool so the borrow's
+      # lifetime ends before the move into `dispatch`.
+      let keep = should_keep_alive(&req)
+      close_after = !keep
+      resp = app.dispatch(req)
+    None -> 0
   end
-  let full_wire = resp.to_http
+  var final_resp = resp
+  if close_after
+    final_resp = final_resp.with_header(&"connection", &"close")
+  else
+    final_resp = final_resp.with_header(&"connection", &"keep-alive")
+  end
+  let full_wire = final_resp.to_http
   let wire = if method == "HEAD"
     head_only_wire(&full_wire)
   else
     full_wire
   end
-  var s = stream
   let _w = block_on(s.write(&wire))
-  let _c = block_on(async_tcp_stream_close_of(s))
-  0
+  !close_after
 end
 
 # ─────────────────────────────────────────────────────────────────

@@ -90,3 +90,25 @@ def serve_open_file(f: File) -> Response
     Err(_)   -> Response.internal_error()
   end
 end
+
+# Decide whether to keep the connection open after serving one
+# request/response cycle. HTTP/1.1 semantics (RFC 9112 §9.3):
+# persistent by default; the client opts out with
+# `Connection: close`. We don't currently carry the request's HTTP
+# version on `Request` — for HTTP/1.0 clients the right behavior is
+# the inverse (close unless `Connection: keep-alive`), and they're
+# rare enough on a modern wire that defaulting to keep-alive and
+# leaving HTTP/1.0 to opt in via the explicit header is the
+# pragmatic call. nginx and envoy take the same shortcut.
+def should_keep_alive(req: &Request) -> Bool
+  match req.header(&"connection")
+    Some(v) ->
+      let lower = v.to_lower
+      if lower.contains(&"close")
+        false
+      else
+        true
+      end
+    None -> true
+  end
+end
