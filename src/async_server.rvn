@@ -37,12 +37,6 @@ def async_handle_one(app: &Rondo, stream: AsyncTcpStream) -> Int
   # on a mutable receiver, so the stream stays usable across calls
   # until we feed it to `async_tcp_stream_close_of` at the end.
   #
-  # Per-connection request cap (nginx-style `keepalive_requests
-  # 1000`): force-close after MAX_REQUESTS_PER_CONN cycles so a
-  # client can't pin a worker forever in the absence of a working
-  # idle timeout. Once Riven exposes reactor-side timer races, a
-  # real idle timeout can replace this.
-  #
   # 64 KiB single-read shape: wrk / curl / browsers on localhost
   # almost always land everything in one read. A multi-read
   # accumulator that handles head-spanning-reads + body chunking
@@ -51,8 +45,15 @@ def async_handle_one(app: &Rondo, stream: AsyncTcpStream) -> Int
   # fast path so the hot loop stays lean.
   var s = stream
   var keep_going: Bool = true
+  # Idle timeout: 60 s, matches the nginx default ballpark.
+  # `read_with_timeout` returns Err(IoError.TimedOut) if no data
+  # arrives within the window — we treat that the same as any
+  # other read error / EOF and close the connection. Resets on
+  # every read, so an active client keeps the conn alive
+  # indefinitely; a silent one is dropped within ~60 s.
+  let idle_ns: Int = 60000000000
   while keep_going
-    let raw_result = block_on(s.read(65536))
+    let raw_result = block_on(s.read_with_timeout(65536, idle_ns))
     match raw_result
       Ok(raw) ->
         let _x = 0

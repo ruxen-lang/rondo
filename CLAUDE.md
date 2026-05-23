@@ -64,9 +64,11 @@ The `Rondo.dispatch` pipeline in `rondo.rvn` is the single most important piece 
 
 ### Current bench shape
 
-On M-series macOS, single-route GET, 4-worker `listen("127.0.0.1:8421", 4)`, wrk 4t/200c/15s: **~56 k RPS, 17 µs p50, 25 µs p99, zero timeouts.** Keep-alive on; no per-request handshake or close. Each request is read + dispatch + write; the close future only fires when the client requests it.
+On M-series macOS, single-route GET, 4-worker `listen("127.0.0.1:8421", 4)`, wrk 4t/200c/15s: **~52 k RPS, 18 µs p50, 26 µs p99, zero timeouts.** Keep-alive on; 60 s idle timeout per connection; no per-request handshake or close. Each request is read-with-timeout + dispatch + write; the close future only fires when the client requests it or idle fires.
 
 Reactor uses persistent fd registration with edge-triggered readiness (`EV_CLEAR` / `EPOLLET`) — the stream registers once at accept and deregisters at drop, so per-request register/deregister syscalls are gone. This is the tokio `AsyncFd` shape.
+
+`AsyncTcpStream.read_with_timeout(max_bytes, timeout_ns)` races the read against a per-poll timer. After `timeout_ns` of no readiness, it returns `Err(IoError.TimedOut)`. Per-read timer registration costs ~1-2 µs of overhead, which is the difference between the 52 k RPS here and the 56 k that the no-timeout configuration measured.
 
 The bench is now CPU-bound on per-request work (parsing, dispatch, serialization), not on connection management. Stable across c=50 to c=800 connections — adding load doesn't change the ceiling because each worker runs one task at a time. The remaining lever for higher RPS is `task::spawn` per connection (multiple in-flight requests per worker); that's a v2 runtime feature. See `docs/research/async-threading-best-practices.md` for the broader v2 roadmap (real wakers, etc.).
 
