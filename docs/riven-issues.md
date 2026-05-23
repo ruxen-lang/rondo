@@ -107,6 +107,139 @@ So `Some(x)` matched the `variant_idx == 0` arm and got an empty
 `variant_idx == 1`. Result's arms were already correct. Riven
 commit `80acb14`.
 
+### F5. `AsyncTcpListener.accept` died on `ECONNABORTED`
+
+**Symptom:** rondo's `serve-async` (single-reactor) and
+`serve-async-multi` (4 SO_REUSEPORT workers) processes died after
+~2.5 s of `wrk` load on macOS. Process exited cleanly via
+`Ok(nil)` — the async accept loop hit `Err(_)`, set
+`keep_going = false`, and returned. In async-multi the same path
+killed one worker per ECONNABORTED, leaking its LISTEN fd in the
+kernel and wedging ~25% of subsequent connections via
+SO_REUSEPORT routing to the dead listener's accept queue.
+
+**Root cause:** Classic BSD/macOS gotcha (Stevens UNP §15.6) —
+after kqueue signals the listener "readable," the head-of-queue
+connection can abort (peer RST between SYN/ACK and accept).
+Blocking accept hides this; the kernel silently dequeues and
+keeps blocking. Non-blocking accept surfaces it as
+`errno == ECONNABORTED`.
+`library/std/async_net/runtime/async_net.c::riven_async_accept_step`
+correctly retried on `EINTR` and parked on `EAGAIN/EWOULDBLOCK`
+but treated every other errno — including `ECONNABORTED` — as
+fatal, bubbling it up to the user's accept loop.
+
+**Fix:** Treat `ECONNABORTED` as a soft retry (loop back inside
+the C state machine, don't surface to user code). Matches Go's
+`net` package, tokio, and libevent behaviour. Same fix applied
+to the sync side
+(`library/std/net/runtime/tcp.c::riven_tcp_listener_accept`) so
+the BSD gotcha is plugged across the whole stack — `EINTR` is
+still propagated there so cooperative SIGINT loops keep working.
+
+### F6. `Thread.spawn` was slow on macOS due to default 512KB stack
+
+**Symptom:** rondo's `serve-threaded` mode capped at ~1.6k RPS
+regardless of concurrency. Measured per-cycle cost: sync (no
+spawn) 32 µs/req, threaded 616 µs/req → `Thread.spawn` added
+~584 µs per call on macOS. Profiling showed `pthread_create` was
+the bottleneck — only 3-6 worker threads ever alive under a
+200-connection load (workers exit nearly as fast as the main
+thread can spawn them).
+
+**Root cause:**
+`library/std/sync/runtime/thread.c::riven_thread_spawn` called
+`pthread_create(&tid, NULL, …)` — `NULL` attr means OS default
+stack size. macOS default is 512KB; XNU's per-thread setup cost
+scales with the configured stack.
+
+**Fix:** Set an explicit default via
+`pthread_attr_setstacksize`. Initially 256 KB (16× macOS's
+`PTHREAD_STACK_MIN`). Later **rolled back to 512 KB** in
+riven `1d6e245` — matching macOS's pthread default exactly —
+because 256 KB was below the OS default and risky for FFI
+handlers whose stack depth gets non-trivial (LLVM-generated
+code with large stack frames, deep recursive parsers).
+Overridable per-process via `RIVEN_THREAD_STACK_KB` env
+(0 = OS default — useful for stack-overflow debugging on
+Linux where the OS default is 8 MB).
+
+### F7. `AsyncCloseFuture` only shutdown, never closed → fd leak
+
+**Symptom:** under sustained wrk load, rondo's async listener
+exhausted the kernel's file table (`kern.maxfiles` hit on macOS),
+wedging the box. Per-connection lsof showed accepted sockets
+stuck in TIME_WAIT with the fd still held by the server process.
+
+**Root cause:** `riven_async_tcp_stream_shutdown` (called by
+`AsyncCloseFuture.poll`) issued `shutdown(SHUT_RDWR)` but relied
+on Riven's drop elaboration to invoke `AsyncTcpStream`'s
+FFI-bound `def drop` for the stream field of the close future.
+That drop hook wasn't firing reliably, so every accepted
+connection leaked its fd.
+
+**Fix:** `riven_async_tcp_stream_shutdown` now does
+`shutdown(SHUT_RDWR)` + `close(fd)` + mark the stream closed
+inline. The `close` surface is authoritative — by the time
+`block_on(stream.close())` returns Ready, the fd is gone. Riven
+`1b888b8`.
+
+### F8. Per-poll register/deregister churn on AsyncTcpStream
+
+**Symptom:** Rondo's keep-alive bench plateaued at ~52 k RPS;
+profiling showed per-request `kevent EV_ADD` + `EV_DELETE` pairs
+for the read fd. Each I/O step did register-on-EAGAIN +
+deregister-on-Ready, costing 2 extra syscalls per step (6+ per
+HTTP request on top of read/write/close itself). Also tripped
+W18 — many keep-alive cycles on one connection eventually
+destabilised the worker (suspect slot-table accumulation in the
+reactor under the churn).
+
+**Fix:** Persistent fd registration. `AsyncTcpStream` registers
+its fd ONCE at construction (in `riven_async_tcp_stream_from_fd`)
+with edge-triggered readiness (`EV_CLEAR` / `EPOLLET`), stores
+the slot handle on the stream struct, and deregisters once at
+drop. Read/Write futures only consult `check_fired` — they don't
+touch the reactor's slot table per poll. Same shape as tokio's
+`AsyncFd`. Riven `c6f1e2d`. RPS up 9% (51 k → 56 k); W18 crash
+disappears.
+
+### F9. `AsyncTcpStream.read_with_timeout` — idle timeout on async reads
+
+**Symptom:** there was no way to bound how long
+`block_on(stream.read(N))` waited. A client that opened a
+keep-alive connection and never sent data pinned the worker
+forever — keep-alive in production needs an idle timeout
+(nginx defaults to 75 s, envoy to 60 s).
+
+**Fix:** New future `AsyncReadWithTimeoutFuture` pairs the read
+state machine with a per-poll `riven_reactor_register_timer(ns)`.
+Park waits on EITHER fd-readiness OR timer fire; the next poll
+resolves the race deterministically and the loser's slot is
+deregistered. Returns `Err(IoError.TimedOut)` on timer win.
+Riven `8d63e9d`. Rondo uses it with a 60 s default; verified
+end-to-end (a silent client is dropped at 3006 ms when
+configured for 3 s).
+
+### F10. Real wakers + `Task.spawn_raw`
+
+**Symptom:** `Waker` was a no-op singleton. The only way to
+drive a future was `block_on(future)` — no intra-worker
+concurrency, every connection blocked the worker until its
+keep-alive session ended.
+
+**Fix:** Each per-thread reactor owns a wake fd
+(`eventfd(EFD_NONBLOCK)` on Linux, `EVFILT_USER` on macOS)
+registered with itself. `Waker.wake()` writes 8 bytes to the
+wake fd; the parked thread unparks and re-polls. `Task.spawn_raw`
+adds futures to a per-reactor task table; `block_on` becomes a
+real scheduler loop driving the entry future + all spawned
+tasks. Riven `59b8de6`. Single-threaded per reactor (no
+cross-thread spawn yet). Verified via a 100-task fixture
+(sum 1..100 = 5050). Rondo bench unchanged at 51 k RPS — using
+`Task.spawn_raw` in the accept loop is gated on E1115 (see
+W15 update below).
+
 ---
 
 ## Workarounds in current Rondo (need real upstream fixes)
@@ -322,6 +455,158 @@ the top level rather than namespaced under `rondo`.
 **Proper fix:** Wrap each dep's program in a module DefId during
 resolve so `use rondo.X` resolves through `Module(rondo) →
 Class(X)`.
+
+### W15. `Thread.spawn` closure crashes when worker calls `block_on` and captures references — **FIXED in riven `a182502`**
+
+The async-multi listener with 4 workers now boots cleanly and
+serves load (verified by Rondo's bench). Description preserved
+below for archeology.
+
+**Symptom (historical):** the multi-worker async serving model
+(`Rondo.listen_async_multi`) segfaulted the spawned thread
+**before any line of the worker body ran**. Verified by
+adding `puts "worker: entering"` as the first statement of
+the captured closure body — no output is printed before
+the SIGSEGV.
+
+Setup that crashes:
+
+```riven
+def async_worker(app: &Rondo, addr: &String) -> Int
+  puts "worker: entering"   # never prints
+  let bound = block_on(AsyncTcpListener.bind(addr))
+  ...
+end
+
+def spawn_async_workers(app: &Rondo, addr: &String, workers: Int)
+  let _h = Thread.spawn({ || async_worker(app, addr) })   # ← segfault
+  ...
+end
+```
+
+Reduction that **works**:
+- `Thread.spawn({ || diag_worker() })` where `diag_worker` takes
+  no args (no captures) and calls `block_on(AsyncTcpListener.bind(...))`
+  internally — the worker runs and prints, the join returns 7.
+- `Thread.spawn({ || run_request(app, stream) })` where `app: &Rondo`
+  and `stream: TcpStream` (TcpStream captured by move) — the
+  threaded-per-connection variant (`listen_threaded`) works under
+  thousands of `ab` requests without failure.
+- The same `async_worker(app, addr)` called directly on the main
+  thread serves traffic correctly — confirms the worker body itself
+  is fine.
+
+So the crashing combination is: **`Thread.spawn` closure that
+captures TWO non-Send-moved values (any of: `&Rondo`, `&String`,
+owned `String` via `addr.clone`) AND whose body calls `block_on(...)`.**
+A single-capture closure of a moved value works. A capture-less
+block_on works. The interaction of capture + block_on is the gap.
+
+The Riven side calls this out in
+`docs/rondo_v1_blockers.md` cross-reference for B1, citing
+`project_riven_task_spawn_ownership_gap.md` ("Task.spawn already
+has a drop-elaboration gap; the same shape on Thread.spawn is
+the likely failure mode") — this is exactly that mode.
+
+**Workaround in current Rondo:** `Rondo.listen_async_multi` is
+shipped but its body falls back to running the async accept
+loop on the main thread (equivalent to `listen_async`) and
+prints a warning if the caller asked for >1 worker. The
+`SO_REUSEPORT` runtime patch (riven `async_net.c`,
+docs/rondo_v1_blockers.md §B5) is in place and verified by
+the `reuseport-check` mode of rondo-smoke (`bind` from two
+threads on the same port both succeed), so the only thing
+blocking real multi-core serving is this Thread.spawn capture
+gap.
+
+**Acceptance test for the fix:** the riven-side fixture
+should match this exact shape — capture `&Rondo` and `&String`
+(or owned `String`) in a `Thread.spawn` closure whose body
+calls `block_on(...)`, and ensure the worker's first `puts`
+fires.
+
+### W16. Tuple returns of FFI-owning classes double-drop
+
+**Symptom:** a helper that takes ownership of a `TcpStream` and
+returns `(TcpStream, Bool)` SIGSEGVs the worker on the SECOND
+keepalive iteration. Both the tuple's stored stream and the
+caller's reassigned binding try to drop; the second close
+hits a freed fd.
+
+**Workaround:** use `Option[T]` instead of tuples for any
+function that hands a stream back to its caller. `Some(stream)`
+correctly moves the payload out through `unwrap`. This is why
+the early sync-server keep-alive attempt was reverted to
+close-per-request — see `handle_one` commit history.
+
+**Acceptance test for the fix:** drop-elaboration should treat
+tuple-extract (`result.0`) the same as `Option.unwrap` for
+move-semantics.
+
+### W17. FFI-bound `def drop` doesn't always fire for class fields of a future
+
+**Symptom:** `AsyncCloseFuture.stream` had a
+`def drop as "riven_async_tcp_stream_drop"` but the field's
+drop wasn't invoked when the close future itself dropped,
+leaking the fd. The shape is: future class with a class-typed
+field whose class has a `lib`-bound drop hook.
+
+**Workaround in current Rondo:** the `close` C-side method does
+the fd close inline (not just `shutdown`) so the stream's own
+drop becomes a no-op safety net. See riven `1b888b8`.
+
+**Acceptance test for the fix:** drop elaboration should walk
+class field types and emit FFI-aliased drop calls in
+declaration order on scope exit — for future classes, this
+fires when `block_on` returns the future's Output.
+
+### W18. Many keep-alive iterations on a single async TCP connection eventually crash the worker — **FIXED in riven `c6f1e2d`**
+
+The persistent-fd-registration shape (F8) eliminates the
+per-cycle reactor slot churn that caused this. Rondo's
+keep-alive bench now sustains unbounded iterations per
+connection (verified across c=50/200/800 and 800+ requests per
+connection without incident).
+
+### W19. `.await` inside `while`/`for` loop body — E1115
+
+**Symptom:** the riven compiler emits **E1115** when an
+`async def` body contains a `while` or `for` loop whose body
+performs a `.await`. Async-lowering's state-machine codegen
+doesn't yet model the loop-back edge — every `.await` becomes
+a state transition, but the body of a loop generates an edge
+back to the loop-condition state that the current pass doesn't
+emit.
+
+**Why this matters for Rondo:** the natural shape for
+intra-worker concurrency is
+
+```riven
+async def serve(app: &Rondo, l: AsyncTcpListener)
+  while keep_going
+    let pair = l.accept.await
+    match pair
+      Ok(p) -> Task.spawn_raw(handle_one_async(app, p.0))
+      Err(_) -> keep_going = false
+    end
+  end
+end
+```
+
+The runtime piece (`Task.spawn_raw` + real wakers, F10) is
+already in place but is currently only useful for unrolled
+spawn patterns. Rondo can't take advantage of intra-worker
+concurrency until E1115 is closed.
+
+**Workaround:** unroll `.await` calls (each at the top level of
+the async fn, not inside any loop). Works for fixed-count
+spawns; not viable for accept loops.
+
+**Acceptance test for the fix:** an `async def` whose body
+contains `while N { Task.spawn_raw(future); other.await }`
+should lower into a state machine whose post-await state jumps
+back to the loop's condition-check state. Existing fixture 728
+(no loop) should remain green.
 
 ---
 
