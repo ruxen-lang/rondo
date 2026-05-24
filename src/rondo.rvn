@@ -28,6 +28,17 @@ class Rondo
   # serving. On 404, Rondo looks for `<public_folder>/<path>` and
   # serves it if found.
   public_folder: String
+  cors_enabled: Bool
+  cors_origin: String
+  cors_methods: String
+  cors_headers: String
+  cors_max_age: String
+  cors_credentials: Bool
+  bind_host: String
+  bind_port: Int
+  worker_count: Int
+  max_connection_count: Int
+  active_connections: AtomicUsize
 
   def init
     self.routes = Array.new
@@ -36,6 +47,17 @@ class Rondo
     self.error_codes = Array.new
     self.error_handlers = Array.new
     self.public_folder = ""
+    self.cors_enabled = false
+    self.cors_origin = "*"
+    self.cors_methods = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    self.cors_headers = "Content-Type, Authorization"
+    self.cors_max_age = "600"
+    self.cors_credentials = false
+    self.bind_host = "127.0.0.1"
+    self.bind_port = 3000
+    self.worker_count = 4
+    self.max_connection_count = 0
+    self.active_connections = AtomicUsize.new(0)
   end
 
   ## Register a hook to run before each request. The hook receives
@@ -71,6 +93,114 @@ class Rondo
   ## `<public_folder>/<request_path>` and serves it if found.
   def var set_public_folder(path: &String)
     self.public_folder = path.clone
+  end
+
+  ## Enable permissive CORS for API-style apps.
+  def var cors()
+    self.cors_enabled = true
+  end
+
+  def var cors_origin(origin: &String)
+    self.cors_enabled = true
+    self.cors_origin = origin.clone
+  end
+
+  def var cors_methods(methods: &String)
+    self.cors_enabled = true
+    self.cors_methods = methods.clone
+  end
+
+  def var cors_headers(headers: &String)
+    self.cors_enabled = true
+    self.cors_headers = headers.clone
+  end
+
+  def var cors_max_age(max_age: &String)
+    self.cors_enabled = true
+    self.cors_max_age = max_age.clone
+  end
+
+  def var cors_credentials(credentials: Bool)
+    self.cors_enabled = true
+    self.cors_credentials = credentials
+  end
+
+  ## Full-control CORS setup. Most apps should prefer:
+  ## `app.cors`, then the focused `cors_*` setters they need.
+  def var cors_policy(origin: &String,
+                      methods: &String,
+                      headers: &String,
+                      max_age: &String,
+                      credentials: Bool)
+    self.cors_origin(origin)
+    self.cors_methods(methods)
+    self.cors_headers(headers)
+    self.cors_max_age(max_age)
+    self.cors_credentials(credentials)
+  end
+
+  ## Configure the host used by `listen()` / `run()`.
+  ## Default: "127.0.0.1".
+  def var host(value: &String)
+    self.bind_host = value.clone
+  end
+
+  ## Configure the port used by `listen()` / `run()`.
+  ## Default: 3000.
+  def var port(value: Int)
+    self.bind_port = value
+  end
+
+  ## Configure the worker count used by `listen()` / `run()`.
+  ## Default: 4.
+  def var workers(value: Int)
+    self.worker_count = value
+  end
+
+  ## Cap active accepted connections across all workers.
+  ## `0` means unlimited, which is the default.
+  def var max_connections(value: Int)
+    self.max_connection_count = value
+  end
+
+  def try_acquire_connection -> Bool
+    if self.max_connection_count <= 0
+      return true
+    end
+    let prev = self.active_connections.fetch_add(1)
+    if prev >= self.max_connection_count
+      self.active_connections.fetch_sub(1)
+      false
+    else
+      true
+    end
+  end
+
+  def release_connection -> ()
+    if self.max_connection_count > 0
+      self.active_connections.fetch_sub(1)
+    end
+  end
+
+  def bind_addr -> String
+    bind_addr_from(&self.bind_host, self.bind_port)
+  end
+
+  def cors_response(resp: Response) -> Response
+    var r = resp
+    if self.cors_enabled
+      r.with_header(&"access-control-allow-origin", &self.cors_origin)
+      r.with_header(&"access-control-allow-methods", &self.cors_methods)
+      r.with_header(&"access-control-allow-headers", &self.cors_headers)
+      r.with_header(&"access-control-max-age", &self.cors_max_age)
+      if self.cors_credentials
+        r.with_header(&"access-control-allow-credentials", &"true")
+      end
+      if self.cors_origin != "*"
+        r.with_header(&"vary", &"Origin")
+      end
+    end
+    r
   end
 
   def var get(path: &String, handler: any Fn(&Request) -> Response)
@@ -133,6 +263,15 @@ class Rondo
     var r = req
     merge_params_into(&matched_params, &var r.params)
 
+    # Built-in CORS preflight handling runs before user hooks so
+    # browsers can negotiate access without requiring a matching
+    # application route.
+    if self.cors_enabled && r.method == "OPTIONS"
+      var preflight = Response.text(&"")
+      preflight = preflight.with_status(204)
+      return self.cors_response(preflight)
+    end
+
     # 3. Walk before-hooks. The first one to return Some(resp)
     # short-circuits the request — handler is skipped.
     let hn: Int = self.before_hooks.len() as Int
@@ -141,7 +280,7 @@ class Rondo
       match self.before_hooks.get(hi)
         Some(hook) ->
           match hook.(&r)
-            Some(resp) -> return resp
+            Some(resp) -> return self.cors_response(resp)
             None -> 0
           end
         None -> 0
@@ -208,10 +347,10 @@ class Rondo
       eci = eci + 1
     end
 
-    resp
+    self.cors_response(resp)
   end
 
-  ## Bind to the address and serve until interrupted.
+  ## Bind and serve until interrupted.
   ##
   ## Thread-per-core async event loop. `workers` OS threads each
   ## bind the same port via SO_REUSEPORT and run their own
@@ -222,7 +361,49 @@ class Rondo
   ## Pick `workers` to roughly match the machine's perf-core
   ## count. 4 is a reasonable default for an M-series Mac; on a
   ## Linux server, 1 per CPU is the nginx/envoy convention.
-  def listen(addr: &String, workers: Int) -> Result[(), String]
-    spawn_async_workers(self, addr, workers)
+  ## Overloads:
+  ##
+  ##   app.listen()                         # 127.0.0.1:3000
+  ##   app.listen(9292)                     # 127.0.0.1:9292
+  ##   app.listen(&"0.0.0.0")               # 0.0.0.0:3000
+  ##   app.listen(&"127.0.0.1:8421")        # full address
+  ##   app.listen(&"127.0.0.1:8421", 4)     # full address + workers
+  ##
+  ## Worker count is configured separately with `app.workers(n)`.
+  def listen() -> Result[(), String]
+    let addr = self.bind_addr
+    spawn_async_workers(self, &addr, self.worker_count)
   end
+
+  def listen(port: Int) -> Result[(), String]
+    let addr = bind_addr_from(&self.bind_host, port)
+    spawn_async_workers(self, &addr, self.worker_count)
+  end
+
+  def listen(addr_or_host: &String) -> Result[(), String]
+    let addr = if addr_or_host.contains(&":")
+      addr_or_host.clone
+    else
+      bind_addr_from(addr_or_host, self.bind_port)
+    end
+    spawn_async_workers(self, &addr, self.worker_count)
+  end
+
+  def listen(addr_or_host: &String, workers: Int) -> Result[(), String]
+    let addr = if addr_or_host.contains(&":")
+      addr_or_host.clone
+    else
+      bind_addr_from(addr_or_host, self.bind_port)
+    end
+    spawn_async_workers(self, &addr, workers)
+  end
+
+  ## Backward-compatible alias for `listen()`.
+  def run -> Result[(), String]
+    self.listen()
+  end
+end
+
+def bind_addr_from(host: &String, port: Int) -> String
+  host.clone + ":" + "#{port}"
 end

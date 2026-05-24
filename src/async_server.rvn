@@ -2,72 +2,156 @@
 ## sync server's `serve_forever / handle_one` flow but drives every
 ## I/O step through `block_on(future)` instead of synchronous calls.
 ##
-## Single-worker (`async_serve_loop`) — one accept, one full request
-## cycle, next accept; same shape as the sync path but through async
-## futures. Multi-worker (`spawn_async_workers`) — N OS threads, each
-## binding the same port via SO_REUSEPORT and running its own
-## per-thread reactor. The kernel load-balances accepts across the
-## bindings.
+## Single-worker (`async_serve_loop`) and multi-worker
+## (`spawn_async_workers`) both use the same shape: each worker owns
+## one reactor, awaits accepts, and hands every accepted connection
+## to `Task.spawn_raw`. That gives intra-worker concurrency: a slow
+## keep-alive connection no longer blocks that worker from accepting
+## and serving other sockets.
 
 def async_serve_loop(app: &Rondo, listener: AsyncTcpListener, addr: &String) -> Result[(), String]
   puts "rondo: listening on #{addr} (async)"
+  let _served = async_accept_and_spawn(app, listener)
+  Ok(nil)
+end
+
+def async_accept_and_spawn(app: &Rondo, listener: AsyncTcpListener) -> Int
   var l = listener
   var keep_going: Bool = true
   while keep_going
     let accepted = block_on(l.accept)
     match accepted
-      Ok(pair) -> async_handle_pair(app, pair)
-      Err(_)   -> keep_going = false
-    end
-  end
-  Ok(nil)
-end
-
-def async_handle_pair(app: &Rondo, pair: (AsyncTcpStream, String))
-  # Destructure (stream, peer_addr) — drop the peer. Hand the
-  # stream by-move to the per-request worker so the executor
-  # can move on to the next accept after this returns.
-  let stream = pair.0
-  async_handle_one(app, stream)
-end
-
-def async_handle_one(app: &Rondo, stream: AsyncTcpStream) -> Int
-  # HTTP/1.1 keep-alive cycle. We hold the stream by-value across
-  # iterations — AsyncTcpStream.read/.write are `def var` methods
-  # on a mutable receiver, so the stream stays usable across calls
-  # until we feed it to `async_tcp_stream_close_of` at the end.
-  #
-  # 64 KiB single-read shape: wrk / curl / browsers on localhost
-  # almost always land everything in one read. A multi-read
-  # accumulator that handles head-spanning-reads + body chunking
-  # is in `read_full_request` and lives behind the same surface
-  # for callers that need it, but the bench uses the single-read
-  # fast path so the hot loop stays lean.
-  var s = stream
-  var keep_going: Bool = true
-  # Idle timeout: 60 s, matches the nginx default ballpark.
-  # `read_with_timeout` returns Err(IoError.TimedOut) if no data
-  # arrives within the window — we treat that the same as any
-  # other read error / EOF and close the connection. Resets on
-  # every read, so an active client keeps the conn alive
-  # indefinitely; a silent one is dropped within ~60 s.
-  let idle_ns: Int = 60000000000
-  while keep_going
-    let raw_result = block_on(s.read_with_timeout(65536, idle_ns))
-    match raw_result
-      Ok(raw) ->
-        let _x = 0
-        if raw.len() == 0
-          keep_going = false
-        else
-          keep_going = async_serve_one_cycle(app, &var s, &raw)
+      Ok(pair) ->
+        let stream = pair.0
+        if app.try_acquire_connection()
+          let fut: RondoConnectionTask = RondoConnectionTask.new(app, stream)
+          let _h = Task.spawn_raw(fut)
         end
-      Err(_) ->
-        keep_going = false
+      Err(_) -> keep_going = false
     end
   end
-  let _c = block_on(async_tcp_stream_close_of(s))
-  0
+  1
+end
+
+def async_cycle_wire(app: &Rondo, raw_result: Result[String, IoError]) -> (String, Bool)
+  match raw_result
+    Ok(raw) ->
+      let _x = 0
+      if raw.len() == 0
+        (String.from(&""), false)
+      else
+        let method = extract_method(&raw)
+        var close_after: Bool = true
+        var resp: Response = Response.text(&"bad request")
+        resp = resp.with_status(400)
+        match Request.parse(&raw)
+          Some(req) ->
+            let keep = should_keep_alive(&req)
+            close_after = !keep
+            resp = app.dispatch(req)
+          None -> 0
+        end
+        var final_resp = resp
+        if close_after
+          final_resp = final_resp.with_header(&"connection", &"close")
+        else
+          final_resp = final_resp.with_header(&"connection", &"keep-alive")
+        end
+        let full_wire = final_resp.to_http
+        let wire = if method == "HEAD"
+          head_only_wire(&full_wire)
+        else
+          full_wire
+        end
+        (wire, !close_after)
+      end
+    Err(_) -> (String.from(&""), false)
+  end
+end
+
+class RondoConnectionStream
+  s: AsyncTcpStream
+
+  def init(@s: AsyncTcpStream)
+  end
+end
+
+class RondoConnectionTask
+  app: &Rondo
+  conn: RondoConnectionStream
+  state: Int
+  keep_going: Bool
+  idle_ns: Int
+  counted: Int
+  wire: String
+  read_fut: AsyncReadWithTimeoutFuture
+  write_fut: AsyncWriteFuture
+  include Future
+  type Output = Int
+
+  def init(app: &Rondo, s: AsyncTcpStream)
+    self.app = app
+    self.conn = RondoConnectionStream.new(s)
+    self.state = 0
+    self.keep_going = true
+    self.idle_ns = 60000000000
+    self.counted = 1
+    self.wire = String.from(&"")
+    self.read_fut = self.conn.s.read_with_timeout(65536, self.idle_ns)
+    self.write_fut = self.conn.s.write(&self.wire)
+  end
+
+  def var release
+    if self.counted != 0
+      self.app.release_connection()
+      self.counted = 0
+    end
+  end
+
+  def var poll(cx: &var Context) -> Poll[Int]
+    while true
+      if self.state == 0
+        self.read_fut = self.conn.s.read_with_timeout(65536, self.idle_ns)
+        self.state = 1
+      end
+
+      if self.state == 1
+        match self.read_fut.poll(cx.clone)
+          Poll.Pending -> return Poll.Pending
+          Poll.Ready(raw_result) ->
+            let cycle = async_cycle_wire(self.app, raw_result)
+            self.wire = cycle.0
+            self.keep_going = cycle.1
+            if self.wire.len() == 0
+              if !self.keep_going
+                self.release()
+                return Poll.Ready(0)
+              end
+            end
+            self.write_fut = self.conn.s.write(&self.wire)
+            self.state = 2
+        end
+      end
+
+      if self.state == 2
+        match self.write_fut.poll(cx.clone)
+          Poll.Pending -> return Poll.Pending
+          Poll.Ready(_) ->
+            if self.keep_going
+              self.state = 0
+            else
+              self.release()
+              return Poll.Ready(0)
+            end
+        end
+      end
+    end
+    Poll.Ready(0)
+  end
+
+  def drop
+    self.release()
+  end
 end
 
 # Read one HTTP request from the async stream. Returns the raw
@@ -132,7 +216,8 @@ end
 def async_serve_one_cycle(app: &Rondo, s: &var AsyncTcpStream, raw: &String) -> Bool
   let method = extract_method(raw)
   var close_after: Bool = true
-  var resp: Response = Response.text(&"bad request").with_status(400)
+  var resp: Response = Response.text(&"bad request")
+  resp = resp.with_status(400)
   match Request.parse(raw)
     Some(req) ->
       # Borrow-then-move: read the connection header off `req`
@@ -193,7 +278,7 @@ end
 # crashing worker is distinguishable from a working one.
 def async_worker(app: &Rondo, addr: &String) -> Int
   puts "worker: entering"
-  let bound = block_on(AsyncTcpListener.bind(addr))
+  let bound = AsyncTcpListener.bind_now(addr)
   puts "worker: bind returned"
   match bound
     Ok(listener) ->
@@ -207,14 +292,5 @@ def async_worker(app: &Rondo, addr: &String) -> Int
 end
 
 def async_worker_serve(app: &Rondo, listener: AsyncTcpListener) -> Int
-  var l = listener
-  var keep_going: Bool = true
-  while keep_going
-    let accepted = block_on(l.accept)
-    match accepted
-      Ok(pair) -> async_handle_pair(app, pair)
-      Err(_)   -> keep_going = false
-    end
-  end
-  1
+  async_accept_and_spawn(app, listener)
 end

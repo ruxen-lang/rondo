@@ -75,7 +75,10 @@ Reactor uses persistent fd registration with edge-triggered readiness (`EV_CLEAR
 
 `AsyncTcpStream.read_with_timeout(max_bytes, timeout_ns)` races the read against a per-poll timer. After `timeout_ns` of no readiness, it returns `Err(IoError.TimedOut)`. Per-read timer registration costs ~1-2 µs of overhead, which is the difference between the 52 k RPS here and the 56 k that the no-timeout configuration measured.
 
-The bench is now CPU-bound on per-request work (parsing, dispatch, serialization), not on connection management. Stable across c=50 to c=800 connections — adding load doesn't change the ceiling because each worker runs one task at a time. The remaining lever for higher RPS is `task::spawn` per connection (multiple in-flight requests per worker); that's a v2 runtime feature. See `docs/research/async-threading-best-practices.md` for the broader v2 roadmap (real wakers, etc.).
+The pre-`Task.spawn_raw` bench was CPU-bound on per-request work (parsing, dispatch, serialization), not on connection management. It was stable across c=50 to c=800 connections because each worker ran one connection at a time. Rondo now uses `Task.spawn_raw` per accepted connection inside each worker reactor, so multiple keep-alive connections can make progress within one worker. Re-benchmark before quoting a new RPS ceiling.
+
+Remaining framework and runtime follow-up work is tracked in
+`docs/remaining-tasks.md`.
 
 ## Riven compiler workarounds — read before editing
 

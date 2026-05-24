@@ -25,7 +25,15 @@
 ##     Response.text(&req.body)
 ##   })
 ##
-##   match app.listen(&"127.0.0.1:3000")
+##   # Optional built-in CORS middleware and server config.
+##   app.cors()
+##   app.cors_origin(&"https://client.example")
+##   app.host(&"127.0.0.1")
+##   app.port(3000)
+##   app.workers(4)
+##   app.max_connections(10_000) # 0 = unlimited
+##
+##   match app.listen()
 ##     Ok(_)  -> puts "rondo: server exited cleanly"
 ##     Err(e) -> puts "rondo: ${e}"
 ##   end
@@ -39,7 +47,7 @@
 ## - `response.rvn`    — `Response` class
 ## - `route.rvn`       — `Route` class
 ## - `rondo.rvn`       — `Rondo` class (registration DSL + dispatch
-##                       + the public `listen(addr, workers)` entry)
+##                       + the public `run` / overloaded `listen` entries)
 ## - `router.rvn`      — late-binding helpers (signatures reference
 ##                       user types)
 ## - `async_server.rvn` — async TCP server: per-worker reactor +
@@ -47,11 +55,21 @@
 ##
 ## ## Architecture
 ##
-## Thread-per-core: `listen(addr, N)` spawns N OS threads, each
-## running its own async event loop bound to the same port via
-## SO_REUSEPORT. The kernel load-balances accepts. Connections
-## are persistent (HTTP/1.1 keep-alive). Same shape as nginx /
-## envoy / monoio.
+## Thread-per-core: `run()` / `listen()` spawns `app.workers(N)` OS
+## threads, each running its own async event loop bound to the same
+## port via SO_REUSEPORT. The kernel load-balances accepts.
+## Connections are persistent (HTTP/1.1 keep-alive). Same shape as
+## nginx / envoy / monoio.
+##
+## Listen overloads:
+##
+## ```riven
+## app.listen()                  # 127.0.0.1:3000
+## app.listen(9292)              # 127.0.0.1:9292
+## app.listen(&"0.0.0.0")        # 0.0.0.0:3000
+## app.listen(&"127.0.0.1:8421") # full address
+## app.listen(&"127.0.0.1:8421", 4) # full address + workers
+## ```
 ##
 ## Note: String, Array, Map, Option, Result are all in the Riven
 ## prelude — no `use` needed.

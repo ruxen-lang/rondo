@@ -236,9 +236,11 @@ adds futures to a per-reactor task table; `block_on` becomes a
 real scheduler loop driving the entry future + all spawned
 tasks. Riven `59b8de6`. Single-threaded per reactor (no
 cross-thread spawn yet). Verified via a 100-task fixture
-(sum 1..100 = 5050). Rondo bench unchanged at 51 k RPS — using
-`Task.spawn_raw` in the accept loop is gated on E1115 (see
-W15 update below).
+(sum 1..100 = 5050). Rondo now uses this in the worker accept
+loop: each accepted
+connection is moved into an `async_handle_one_task(...)` future and
+enqueued with `Task.spawn_raw`, so the worker returns to accepting
+while live keep-alive sessions continue on the same reactor.
 
 ---
 
@@ -568,15 +570,14 @@ keep-alive bench now sustains unbounded iterations per
 connection (verified across c=50/200/800 and 800+ requests per
 connection without incident).
 
-### W19. `.await` inside `while`/`for` loop body — E1115
+### W19. `.await` inside `while` loop body — E1115 — **FIXED in Riven `115a56f`**
 
-**Symptom:** the riven compiler emits **E1115** when an
-`async def` body contains a `while` or `for` loop whose body
-performs a `.await`. Async-lowering's state-machine codegen
-doesn't yet model the loop-back edge — every `.await` becomes
-a state transition, but the body of a loop generates an edge
-back to the loop-condition state that the current pass doesn't
-emit.
+**Symptom:** the riven compiler used to emit **E1115** when an
+`async def` body contained a `while` loop whose body performed a
+`.await`. Async-lowering's state-machine codegen did not model
+the loop-back edge — every `.await` became a state transition, but
+the body of a loop generated an edge back to the loop-condition
+state that the pass did not emit.
 
 **Why this matters for Rondo:** the natural shape for
 intra-worker concurrency is
@@ -593,20 +594,16 @@ async def serve(app: &Rondo, l: AsyncTcpListener)
 end
 ```
 
-The runtime piece (`Task.spawn_raw` + real wakers, F10) is
-already in place but is currently only useful for unrolled
-spawn patterns. Rondo can't take advantage of intra-worker
-concurrency until E1115 is closed.
+**Current Rondo shape:** the runtime piece (`Task.spawn_raw` +
+real wakers, F10) is in place, and Rondo now uses it in the
+accept loop. The accepted stream is moved into a spawned async
+connection task. The connection task follows the supported
+multi-await loop form: direct await-let phases in the loop body,
+with synchronous response construction between phases.
 
-**Workaround:** unroll `.await` calls (each at the top level of
-the async fn, not inside any loop). Works for fixed-count
-spawns; not viable for accept loops.
-
-**Acceptance test for the fix:** an `async def` whose body
-contains `while N { Task.spawn_raw(future); other.await }`
-should lower into a state machine whose post-await state jumps
-back to the loop's condition-check state. Existing fixture 728
-(no loop) should remain green.
+**Historical workaround:** unroll `.await` calls (each at the top
+level of the async fn, not inside any loop). This worked for
+fixed-count spawns but was not viable for accept loops.
 
 ---
 

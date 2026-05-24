@@ -154,7 +154,7 @@ end
 def should_keep_alive(req: &Request) -> Bool
   match req.header(&"connection")
     Some(v) ->
-      let lower = v.to_lower
+      let lower: String = v.to_lower
       if lower.contains(&"close")
         false
       else
