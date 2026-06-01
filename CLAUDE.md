@@ -9,80 +9,103 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Rondo is a Sinatra-style web framework written in **Riven** (toolchain at `~/.riven/bin/riven`). The framework code is split across `src/*.rvn` files; Riven resolves classes and free fns across siblings in the same package.
+Rondo is a Sinatra-style web framework written in **Ruxen** (toolchain at `~/.ruxen/bin/ruxen`). The framework code is split across `src/*.rx` files; Ruxen resolves classes and free fns across siblings in the same package.
 
 The mental model is `A (route) → B (handler) → A`. Routes are the chorus, handlers are the verses.
 
 ## Common commands
 
 ```bash
-riven build                # compile the library (debug → target/debug/)
-riven check                # typecheck without codegen — fastest feedback loop
-riven build --release      # release build
-riven clean                # wipe target/
-riven fmt                  # format .rvn files in-place
-riven explain E####        # explain a compiler error code
-riven update --from-source /Users/hassan/.projects/riven   # rebuild + install the toolchain after stdlib changes
+ruxen build                # compile the library (debug → target/debug/)
+ruxen check                # typecheck without codegen — fastest feedback loop
+ruxen build --release      # release build
+ruxen clean                # wipe target/
+ruxen fmt                  # format .rx files in-place
+ruxen explain E####        # explain a compiler error code
+ruxen test                 # discover + run tests/**.rx (RSpec-shaped Tester DSL)
+ruxen upgrade --from-source /Users/hassan/.projects/ruxen   # rebuild + install the toolchain after stdlib changes
 ```
 
-To rebuild Riven itself after touching `~/.projects/riven`, use `riven update --from-source <path>`. Stdlib changes embedded via `include_str!` only land in the toolchain after a fresh build.
+To rebuild Ruxen itself after touching `~/.projects/ruxen`, use `ruxen upgrade --from-source <path>` (`ruxen update` is for project dependencies, not the toolchain). Stdlib changes embedded via `include_str!` only land in the toolchain after a fresh build.
 
-There is no `cargo test`-equivalent yet (`riven test` is a placeholder). The framework is exercised end-to-end through the sibling `~/.projects/rondo-smoke` crate, which serves on `127.0.0.1:8421` via `app.listen(addr, workers)`. `Rondo.dispatch(req) -> Response` remains the pure, socket-free seam for in-process tests inside rondo-smoke's `main`.
+`ruxen test` exists and runs (RSpec-shaped: `tests/**.rx` with `Tester.describe`/`t.it`/`t.expect`), **but its v1 runner is single-file** — it wraps each test file's body in a synthesised `def main` and compiles it with the single-file `ruxenc` driver, so a test file may contain only statements (no top-level `def`/`class`/`use`) and **cannot link the rondo library or any dependency**. That makes `Rondo`/`Request`/`Response` unreachable from a test, so the public API can't be exercised via `ruxen test` yet. See `docs/ruxen-issues.md` W20.
+
+Until the runner gains multi-file/dependency linking, the framework is exercised end-to-end through the sibling `~/.projects/rondo-smoke` crate (which builds via `ruxen build` and so sees the whole library): it serves on `127.0.0.1:8421`, and `Rondo.dispatch(req) -> Response` is the pure, socket-free seam its `main` asserts against (the `✓`/`✗` checks).
 
 ## Architecture
 
 Thread-per-core async event loop:
 
-- `app.listen(addr, N)` spawns N OS threads, each with its own async reactor, all bound to the same port via SO_REUSEPORT. Kernel hashes incoming connections across the N bindings.
+- The server spawns N OS threads (N = `app.workers(N)`), each with its own async reactor, all bound to the same port via SO_REUSEPORT. Kernel hashes incoming connections across the N bindings.
 - HTTP/1.1 keep-alive by default — one TCP connection serves many requests.
+- `Task.spawn_raw` per accepted connection inside each worker reactor, so multiple keep-alive connections make progress concurrently within one worker.
 - Same shape as nginx / envoy / monoio / seastar (the production thread-per-core consensus).
+
+### Public API surface
+
+The app is configured by a fluent DSL on the `Rondo` instance, then started with `run()` or `listen(...)`:
+
+- **Routing:** `get / post / put / delete / patch (path, handler)`. `:name` path segments become params (`req.param(&"name")`).
+- **Hooks:** `before(fn(&Request) -> Option[Response])` (short-circuits if it returns `Some`), `after(fn(&Request, Response) -> Response)`, `on_error(status, fn(&Request, Response) -> Response)`.
+- **CORS middleware:** `cors()` enables it; `cors_origin / cors_methods / cors_headers / cors_max_age / cors_credentials`, or `cors_policy(...)` to set everything at once. Any cors setter implies `cors_enabled = true`. See dispatch wiring below.
+- **Server config:** `host(&str)`, `port(Int)`, `workers(Int)`, `max_connections(Int)` (0 = unlimited; enforced as a bounded active-connection cap in `async_server.rx` via `try_acquire_connection` / `release_connection`).
+- **Entry points:** `run()` uses the configured host/port/workers. `listen()` has overloads — `listen()`, `listen(port)`, `listen(&addr_or_host)`, `listen(&addr, workers)` — that override config for that call. All return `Result[(), String]`.
 
 ### Package layout
 
-The framework is split across files; Riven resolves names across siblings in the same package (top-to-bottom within one file still matters for W10 forward refs):
+The framework is split across files; Ruxen resolves names across siblings in the same package (top-to-bottom within one file still matters for W10 forward refs):
 
 ```
 src/
-  lib.rvn          — package doc, module layout
-  helpers.rvn      — pure free helpers, primitive-only signatures
+  lib.rx          — package doc, module layout
+  helpers.rx      — pure free helpers, primitive-only signatures
                      (segment_at, parse_query_into, parse_header_into,
                       parse_cookies_into, rebuild_body, reason_phrase,
                       extract_method, head_only_wire)
-  request.rvn      — Request class + Request.parse
-  response.rvn     — Response class + builders + to_http serializer
-  route.rvn        — Route class + matches()
-  rondo.rvn        — Rondo class — registration DSL (get/post/put/
+  request.rx      — Request class + Request.parse
+  response.rx     — Response class + builders + to_http serializer
+  route.rx        — Route class + matches()
+  rondo.rx        — Rondo class — registration DSL (get/post/put/
                      delete/patch), hooks (before/after/on_error),
-                     dispatch(req), and the public listen(addr, N)
-                     entry point
-  router.rvn       — late-binding helpers (signatures reference user
+                     CORS middleware (cors/cors_*), server config
+                     (host/port/workers/max_connections + the
+                     connection-cap acquire/release), dispatch(req),
+                     and the run() / overloaded listen() entry points
+  router.rx       — late-binding helpers (signatures reference user
                      types): split_path_query_into,
                      invoke_route_handler, find_get_route_for,
                      try_static_or_404, should_keep_alive
-  async_server.rvn — async TCP server: per-worker reactor +
+  async_server.rx — async TCP server: per-worker reactor +
                      keep-alive request loop. `async_handle_one`
                      loops `async_serve_one_cycle` until the client
                      sends `Connection: close` or the peer closes.
 ```
 
-The `Rondo.dispatch` pipeline in `rondo.rvn` is the single most important piece — most behaviour questions reduce to "what happens at step N of `dispatch`?" The 7 steps: match → merge params → before-hooks → handler/static/404 → after-hooks → error-handler substitution → return.
+The `Rondo.dispatch` pipeline in `rondo.rx` is the single most important piece — most behaviour questions reduce to "what happens at step N of `dispatch`?" The core steps: match → merge params → before-hooks → handler/static/404 → after-hooks → error-handler substitution → return. CORS is woven into this when `cors_enabled`: an `OPTIONS` request short-circuits to a preflight response, and every returned response (handler result, before-hook short-circuit, final) is passed through `cors_response` so the headers are applied uniformly.
 
 ### Current bench shape
 
-On M-series macOS, single-route GET, 4-worker `listen("127.0.0.1:8421", 4)`, wrk 4t/200c/15s: **~52 k RPS, 18 µs p50, 26 µs p99, zero timeouts.** Keep-alive on; 60 s idle timeout per connection; no per-request handshake or close. Each request is read-with-timeout + dispatch + write; the close future only fires when the client requests it or idle fires.
+Apple M4, macOS, single-route GET `/`, 4-worker `rondo-smoke serve` (release), wrk against `127.0.0.1:8421` (measured 2026-06-01, post-`Task.spawn_raw`):
+
+| Load            | RPS      | p50      | p99     | Errors |
+|-----------------|----------|----------|---------|--------|
+| 4t / 200c / 15s | ~120–124 k | 1.7–2.9 ms | ~3.4 ms | 0 |
+| 4t / 50c / 10s  | ~114 k   | 620 µs   | 778 µs  | 0 |
+
+Keep-alive on; 60 s idle timeout per connection; no per-request handshake or close. Each request is read-with-timeout + dispatch + write; the close future only fires when the client requests it or idle fires. To reproduce: `ruxen build --release` in `rondo-smoke`, `./target/release/rondo-smoke serve`, then `wrk -t4 -c200 -d15s --latency http://127.0.0.1:8421/`.
 
 Reactor uses persistent fd registration with edge-triggered readiness (`EV_CLEAR` / `EPOLLET`) — the stream registers once at accept and deregisters at drop, so per-request register/deregister syscalls are gone. This is the tokio `AsyncFd` shape.
 
-`AsyncTcpStream.read_with_timeout(max_bytes, timeout_ns)` races the read against a per-poll timer. After `timeout_ns` of no readiness, it returns `Err(IoError.TimedOut)`. Per-read timer registration costs ~1-2 µs of overhead, which is the difference between the 52 k RPS here and the 56 k that the no-timeout configuration measured.
+`AsyncTcpStream.read_with_timeout(max_bytes, timeout_ns)` races the read against a per-poll timer. After `timeout_ns` of no readiness, it returns `Err(IoError.TimedOut)`. Per-read timer registration costs ~1-2 µs of overhead per cycle.
 
-The pre-`Task.spawn_raw` bench was CPU-bound on per-request work (parsing, dispatch, serialization), not on connection management. It was stable across c=50 to c=800 connections because each worker ran one connection at a time. Rondo now uses `Task.spawn_raw` per accepted connection inside each worker reactor, so multiple keep-alive connections can make progress within one worker. Re-benchmark before quoting a new RPS ceiling.
+`Task.spawn_raw` per accepted connection inside each worker reactor lets multiple keep-alive connections make progress within one worker — this is what lifts throughput to the ~120 k ceiling above (the pre-`Task.spawn_raw` shape ran one connection at a time per worker and topped out far lower). Latency is sub-ms at moderate concurrency and rises into the low-ms range at c=200 as requests queue across the spawned tasks. Re-benchmark on the target hardware before quoting a new ceiling — these numbers are M4-specific.
 
 Remaining framework and runtime follow-up work is tracked in
 `docs/remaining-tasks.md`.
 
-## Riven compiler workarounds — read before editing
+## Ruxen compiler workarounds — read before editing
 
-The codebase is shaped by the Riven compiler's current limitations. **`docs/riven-issues.md` is required reading before any non-trivial edit** — it has reproducers and fixes for each. Recurring constraints you will hit:
+The codebase is shaped by the Ruxen compiler's current limitations. **`docs/ruxen-issues.md` is required reading before any non-trivial edit** — it has reproducers and fixes for each. Recurring constraints you will hit:
 
 - **W1 — Multi-statement match arm bodies must start with a statement keyword.** If you want >1 statement in an arm, the first line must be `let _foo = …` (or `var` / `if` / `while` / etc). Otherwise the parser treats the body as a single expression and mis-attributes the rest. See `Rondo.dispatch` for the canonical `let _captured = params` pattern.
 - **W2 — Same problem with `if/else` arm bodies.** Extract multi-statement bodies into free fns.
@@ -94,13 +117,13 @@ The codebase is shaped by the Riven compiler's current limitations. **`docs/rive
 - **W12 — String literals are `&str`, not `String`.** When returning `Option[String]`, write `Some(String.from(&"ada"))`, not `Some("ada")`.
 - **W13 — No `pub` keyword.** Visibility is implicit; everything is reachable from depending packages.
 
-Workarounds W7 and W8 (dotted-class FFI aliases, no bytes→String) are documented but partially gated — confirm the current Riven toolchain has those before relying on them.
+Workarounds W7 and W8 (dotted-class FFI aliases, no bytes→String) are documented but partially gated — confirm the current Ruxen toolchain has those before relying on them.
 
 - **W16 — Tuple returns of FFI-owning classes double-drop.** A helper that takes ownership of a `TcpStream` and returns `(TcpStream, Bool)` leaks ownership: both the tuple's stored stream and the caller's reassigned binding try to drop, double-closing the fd and SIGSEGV'ing on the second iteration. Use `Option[T]` instead (`Some(stream)` keeps ownership transfer clean through unwrap). Documented in the `handle_one` history; this is why the sync-server keepalive path was reverted to close-per-request.
-- **W17 — FFI-bound `def drop` doesn't always fire for class fields of a future.** `AsyncCloseFuture.stream` had a `def drop as "riven_async_tcp_stream_drop"` but the field's drop wasn't invoked when the future itself dropped, leaking the fd. Workaround: make the explicit `close` method do the fd close, not just `shutdown`. Fixed in riven `1b888b8`.
-- **W18 — Many keep-alive iterations on a single async TCP connection eventually crash the worker.** Symptom: a connection that serves many hundreds of cycles destabilises the server process. Root cause was per-cycle kqueue/epoll register-deregister churn accumulating reactor-slot state. **Fixed in riven `c6f1e2d`** (persistent fd registration on AsyncTcpStream / Listener — registration lives for the stream's lifetime, edge-triggered). The per-connection request cap workaround in `async_handle_one` was removed in rondo after this landed.
+- **W17 — FFI-bound `def drop` doesn't always fire for class fields of a future.** `AsyncCloseFuture.stream` had a `def drop as "ruxen_async_tcp_stream_drop"` but the field's drop wasn't invoked when the future itself dropped, leaking the fd. Workaround: make the explicit `close` method do the fd close, not just `shutdown`. Fixed in ruxen `1b888b8`.
+- **W18 — Many keep-alive iterations on a single async TCP connection eventually crash the worker.** Symptom: a connection that serves many hundreds of cycles destabilises the server process. Root cause was per-cycle kqueue/epoll register-deregister churn accumulating reactor-slot state. **Fixed in ruxen `c6f1e2d`** (persistent fd registration on AsyncTcpStream / Listener — registration lives for the stream's lifetime, edge-triggered). The per-connection request cap workaround in `async_handle_one` was removed in rondo after this landed.
 
-When you encounter a *new* compiler quirk, add an entry to `docs/riven-issues.md` (W-series for workarounds in code, F-series for fixes committed upstream).
+When you encounter a *new* compiler quirk, add an entry to `docs/ruxen-issues.md` (W-series for workarounds in code, F-series for fixes committed upstream).
 
 ## Conventions specific to this codebase
 

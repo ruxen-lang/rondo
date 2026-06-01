@@ -1,0 +1,50 @@
+# Route.matches — static paths, param capture, and method discrimination.
+Tester.describe("Route.matches") do |t: &var Tester|
+  t.it("matches a static path of the same method") do
+    let route = Route.new(&"GET", &"/", { |req: &Request| Response.text(&"x") })
+    let req = Request.build(&"GET", &"/", &"")
+    let matched = match route.matches(&req)
+      Some(_) -> true
+      None    -> false
+    end
+    let _ = BoolMatcher.new(matched).to_be_truthy
+  end
+
+  t.it("does not match a different method") do
+    let route = Route.new(&"GET", &"/", { |req: &Request| Response.text(&"x") })
+    let req = Request.build(&"POST", &"/", &"")
+    let matched = match route.matches(&req)
+      Some(_) -> true
+      None    -> false
+    end
+    let _ = BoolMatcher.new(matched).to_be_falsy
+  end
+
+  t.it("captures a single path param") do
+    let route = Route.new(&"GET", &"/hello/:name", { |req: &Request| Response.text(&"x") })
+    let req = Request.build(&"GET", &"/hello/ada", &"")
+    let name = match route.matches(&req)
+      Some(params) ->
+        match params.get(&"name")
+          Some(v) -> v
+          None    -> String.from(&"<none>")
+        end
+      None -> String.from(&"<nomatch>")
+    end
+    t.expect(name).to_eq(String.from(&"ada"))
+  end
+
+  t.it("captures multiple path params") do
+    let route = Route.new(&"GET", &"/users/:id/posts/:post_id", { |req: &Request| Response.text(&"x") })
+    let req = Request.build(&"GET", &"/users/42/posts/7", &"")
+    let post_id = match route.matches(&req)
+      Some(params) ->
+        match params.get(&"post_id")
+          Some(v) -> v
+          None    -> String.from(&"<none>")
+        end
+      None -> String.from(&"<nomatch>")
+    end
+    t.expect(post_id).to_eq(String.from(&"7"))
+  end
+end

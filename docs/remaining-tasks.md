@@ -2,11 +2,11 @@
 
 This file tracks the remaining Rondo work at the framework boundary.
 It intentionally includes protocol-level and runtime-level dependencies
-so they do not disappear from planning between Rondo and Riven sessions.
+so they do not disappear from planning between Rondo and Ruxen sessions.
 
 Rondo is complete enough to ship Sinatra-shaped apps for static sites,
 JSON APIs, and form-driven endpoints. The remaining items are either
-framework middleware polish, protocol support, or Riven runtime work.
+framework middleware polish, protocol support, or Ruxen runtime work.
 
 ## Framework Surface
 
@@ -40,6 +40,6 @@ are tracked here because they directly affect Rondo server behaviour.
 
 - WebSockets, TLS/HTTPS, and HTTP/2 are protocol-level efforts and should
   be planned as dedicated work, not incidental server edits.
-- The waker/ready-queue items belong primarily in Riven, but Rondo should
+- The waker/ready-queue items belong primarily in Ruxen, but Rondo should
   keep tracking them because incomplete runtime scheduling shows up as
   latency and throughput regressions under concurrent keep-alive load.

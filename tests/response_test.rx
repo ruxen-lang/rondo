@@ -1,0 +1,68 @@
+# Response builders, in-place mutators, and the to_http wire serializer.
+Tester.describe("Response") do |t: &var Tester|
+  t.it("text() is 200 with the given body") do
+    let r = Response.text(&"hi")
+    t.expect(r.status).to_eq(200)
+    t.expect(r.body).to_eq(String.from(&"hi"))
+  end
+
+  t.it("json() is 200") do
+    t.expect(Response.json(&"{\"a\":1}").status).to_eq(200)
+  end
+
+  t.it("html() is 200") do
+    t.expect(Response.html(&"<p>hi</p>").status).to_eq(200)
+  end
+
+  t.it("not_found() is 404") do
+    t.expect(Response.not_found.status).to_eq(404)
+  end
+
+  t.it("internal_error() is 500") do
+    t.expect(Response.internal_error.status).to_eq(500)
+  end
+
+  t.it("with_status rebinds the code") do
+    var r = Response.json(&"{}")
+    r = r.with_status(201)
+    t.expect(r.status).to_eq(201)
+  end
+
+  t.it("with_body replaces the body") do
+    var r = Response.text(&"old")
+    r.with_body(&"new")
+    t.expect(r.body).to_eq(String.from(&"new"))
+  end
+
+  t.it("with_header lowercases the header name") do
+    var r = Response.text(&"x")
+    r.with_header(&"X-Test", &"yes")
+    let v = match r.headers.get(&"x-test")
+      Some(x) -> x
+      None    -> String.from(&"<none>")
+    end
+    t.expect(v).to_eq(String.from(&"yes"))
+  end
+
+  t.it("redirect() is 302 with a location header") do
+    let r = Response.redirect(&"/home")
+    t.expect(r.status).to_eq(302)
+    let loc = match r.headers.get(&"location")
+      Some(x) -> x
+      None    -> String.from(&"<none>")
+    end
+    t.expect(loc).to_eq(String.from(&"/home"))
+  end
+
+  t.it("to_http emits status line, Content-Length, and body after the terminator") do
+    let wire = Response.text(&"hi").to_http
+    let _ = StringMatcher.new(&wire).to_include(&"HTTP/1.1 200 OK\r\n")
+    let _ = StringMatcher.new(&wire).to_include(&"Content-Length: 2\r\n")
+    let _ = StringMatcher.new(&wire).to_include(&"\r\n\r\nhi")
+  end
+
+  t.it("with_cookie emits a Set-Cookie: name=value header on the wire") do
+    let wire = Response.text(&"x").with_cookie(&"sid", &"abc").to_http
+    let _ = StringMatcher.new(&wire).to_include(&"Set-Cookie: sid=abc")
+  end
+end

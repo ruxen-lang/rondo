@@ -1,6 +1,6 @@
-# Async + Threading Runtime Design: Research for Riven v2
+# Async + Threading Runtime Design: Research for Ruxen v2
 
-Audience: principal engineer designing v2 of Riven's async runtime. Assumes async + threads conceptually. Focus: the specific choices production runtimes have converged on, and where Riven's current shape diverges.
+Audience: principal engineer designing v2 of Ruxen's async runtime. Assumes async + threads conceptually. Focus: the specific choices production runtimes have converged on, and where Ruxen's current shape diverges.
 
 ---
 
@@ -65,36 +65,36 @@ The interesting axis is not "async vs threads" but **how many reactors, where do
 
 ### Backpressure
 
-Universal: bounded queues somewhere. tokio's `mpsc` is bounded; Go's channels are bounded; BEAM mailboxes are unbounded by default (the famous source of outages — use `gen_server` with `{:noreply, state, :hibernate}` and selective receive, or a `:queue` with explicit drop). Riven currently has **no backpressure anywhere** — the accept loop is the only natural throttle, and it's a tight loop.
+Universal: bounded queues somewhere. tokio's `mpsc` is bounded; Go's channels are bounded; BEAM mailboxes are unbounded by default (the famous source of outages — use `gen_server` with `{:noreply, state, :hibernate}` and selective receive, or a `:queue` with explicit drop). Ruxen currently has **no backpressure anywhere** — the accept loop is the only natural throttle, and it's a tight loop.
 
 ---
 
-## 2. Where Riven sits today
+## 2. Where Ruxen sits today
 
 Mapped onto the axes:
 
 - **Scheduling**: N independent **current-thread** executors (one per OS worker), no shared state. Effectively a static **event-loop-per-thread** with kernel load-balancing via SO_REUSEPORT. Closest cousin: libuv-clustered or a minimal seastar.
 - **Task↔thread**: 1:1. A future runs to completion on the thread that started it. Not Send. There is no "task" abstraction — `block_on` drives a single future to completion synchronously.
-- **Reactor**: **one per thread**, in TLS. Lazy-init on first `block_on`. **Never released** until thread exit (a deliberate fix for an EMFILE bug under churn). One leaked kqueue/epoll fd per ever-active thread. At 4 workers this is 4 fds — irrelevant. It would matter only if Riven ever spawns/destroys workers dynamically.
+- **Reactor**: **one per thread**, in TLS. Lazy-init on first `block_on`. **Never released** until thread exit (a deliberate fix for an EMFILE bug under churn). One leaked kqueue/epoll fd per ever-active thread. At 4 workers this is 4 fds — irrelevant. It would matter only if Ruxen ever spawns/destroys workers dynamically.
 - **Wake**: no-op. The reactor blocks in `kevent`/`epoll_wait` between polls; the AST-rewriter loop polls in a tight loop between yields. **No cross-thread wake exists** because no future is ever woken from another thread.
 - **I/O loop shape**: per-request, 3 `block_on` calls. Each does at minimum a `kevent_register → kevent_wait → kevent_deregister` triple. That's 3 syscalls of overhead per I/O step, 9 syscalls per request floor, on top of `accept/read/write/close`.
 
 What it cannot do today, no matter how much you tune:
 1. Move a slow request off a hot worker. SO_REUSEPORT load balancing is hash-based; one stuck handler stalls 1/N of new connections until the kernel times out the listen queue.
 2. Wake a future from background work. There is no waker; the architecture assumes the only thing that wakes you is the reactor.
-3. Avoid the register/deregister churn per I/O. tokio's mio keeps the fd registered for the lifetime of the `AsyncFd` and just re-arms readiness; Riven re-registers per future.
+3. Avoid the register/deregister churn per I/O. tokio's mio keeps the fd registered for the lifetime of the `AsyncFd` and just re-arms readiness; Ruxen re-registers per future.
 
 **This last point is almost certainly where the 40k vs 42k gap is hiding.** See section 4.
 
 ---
 
-## 3. Decisions Riven should make for v2
+## 3. Decisions Ruxen should make for v2
 
 ### 3.1 Stay thread-per-core. Do not adopt work-stealing.
 
 **Decision**: keep N independent event loops, one per OS thread. No cross-thread task migration. Tasks remain `!Send`. Match the **monoio / seastar / nginx / envoy** shape, not tokio's default.
 
-**Why**: Riven's target workload is HTTP request/response, the language is young, the runtime is C-backed, and the FFI surface is small. Work-stealing requires (a) `Send` futures (b) `Sync` waker storage (c) atomic queues and (d) careful Drop semantics across threads. Drop-elaboration in Riven is "still maturing" per the project notes — that single fact rules out work-stealing for v2. Every runtime that adopted work-stealing paid for it with a multi-year correctness debt (tokio's `JoinHandle` cancellation bugs, Go's pre-1.14 preemption hangs). You don't want that bill yet.
+**Why**: Ruxen's target workload is HTTP request/response, the language is young, the runtime is C-backed, and the FFI surface is small. Work-stealing requires (a) `Send` futures (b) `Sync` waker storage (c) atomic queues and (d) careful Drop semantics across threads. Drop-elaboration in Ruxen is "still maturing" per the project notes — that single fact rules out work-stealing for v2. Every runtime that adopted work-stealing paid for it with a multi-year correctness debt (tokio's `JoinHandle` cancellation bugs, Go's pre-1.14 preemption hangs). You don't want that bill yet.
 
 The thread-per-core renaissance (glommio 2020, monoio 2021, seastar going back to 2014) is partly philosophical, but the load-distribution math is real: on uniform HTTP workloads, SO_REUSEPORT + sharded reactors gives within 5-10% of work-stealing throughput at a fraction of the implementation complexity ([Datadog glommio post](https://www.datadoghq.com/blog/engineering/introducing-glommio/)).
 
@@ -106,7 +106,7 @@ The thread-per-core renaissance (glommio 2020, monoio 2021, seastar going back t
 
 **Why**: SO_REUSEPORT was Linux's answer to nginx's pre-existing single-accept-with-EPOLLEXCLUSIVE problem. Envoy, nginx 1.9+, and HAProxy all default to it ([Envoy listener balancing](https://medium.com/@hnasr/envoys-listener-connection-balancing-e015a9b09a85)). Kernel hashing is by 4-tuple; for HTTP/1.1 with many short connections it's fairly even. Known failure mode: Linux's BPF-less REUSEPORT can leave one worker idle if connections are very long-lived and few — Cloudflare documented this ([sad state of Linux socket balancing](https://blog.cloudflare.com/the-sad-state-of-linux-socket-balancing/)). For HTTP/1.0-close at 40k RPS, you're not in that regime.
 
-The "single accept, dispatch via SPSC to N workers" model is what envoy uses with its "exact balance" listener option, and what some Go programs do with hand-rolled accept dispatching. It guarantees perfect balance at the cost of one cross-thread handoff per connection (~50-200ns and a cache line bounce). For Riven, it's a v3 lever to pull *if* you see imbalance under measured load.
+The "single accept, dispatch via SPSC to N workers" model is what envoy uses with its "exact balance" listener option, and what some Go programs do with hand-rolled accept dispatching. It guarantees perfect balance at the cost of one cross-thread handoff per connection (~50-200ns and a cache line bounce). For Ruxen, it's a v3 lever to pull *if* you see imbalance under measured load.
 
 ### 3.3 Keep the reactor leaked. Document it.
 
@@ -136,9 +136,9 @@ tokio's `AsyncFd` model: one `epoll_ctl(ADD)` at construction, one `epoll_ctl(DE
 
 **Decision**: ship 512 KB or 1 MB for v2, configurable via the `Thread.spawn` builder.
 
-**Why**: pthread default on Linux is 8 MB; on macOS, 512 KB (non-main thread) or 8 MB (main). 256 KB is below macOS default and **at the edge** of "fine for HTTP handlers, dangerous for anything that calls into user code with non-trivial stack frames." Riven handlers will call user code through FFI; user code may recurse, allocate large structs on the stack, or call into LLVM-generated code with high stack usage. 1 MB costs you 768 KB of address space per worker — at 4 workers, 3 MB. Irrelevant. The cost of getting a stack overflow at 256 KB in production is a SIGSEGV with no useful trace.
+**Why**: pthread default on Linux is 8 MB; on macOS, 512 KB (non-main thread) or 8 MB (main). 256 KB is below macOS default and **at the edge** of "fine for HTTP handlers, dangerous for anything that calls into user code with non-trivial stack frames." Ruxen handlers will call user code through FFI; user code may recurse, allocate large structs on the stack, or call into LLVM-generated code with high stack usage. 1 MB costs you 768 KB of address space per worker — at 4 workers, 3 MB. Irrelevant. The cost of getting a stack overflow at 256 KB in production is a SIGSEGV with no useful trace.
 
-nginx workers run on the OS default (8 MB virtual, paged in lazily). Go starts goroutines at 2 KB but **only because Go can move stacks**, which Riven cannot. envoy uses pthread defaults. **You are not goroutines. Be honest about your stack story and ship a real number.**
+nginx workers run on the OS default (8 MB virtual, paged in lazily). Go starts goroutines at 2 KB but **only because Go can move stacks**, which Ruxen cannot. envoy uses pthread defaults. **You are not goroutines. Be honest about your stack story and ship a real number.**
 
 ### 3.7 HTTP/1.1 keepalive: this is the biggest single RPS win available.
 
@@ -152,7 +152,7 @@ Plumbing: read until end-of-headers, parse `Content-Length`/`Transfer-Encoding`,
 
 **Decision**: `AsyncTcpStream::drop` calls `close(fd)`. The deregistration from the reactor happens **first**, then close. Mirror tokio's `AsyncFd::Drop` order.
 
-**Why**: closing a registered fd is the most fertile bug-source in epoll/kqueue code. On Linux, `close()` on a `dup`'d fd does *not* remove the registration (the kernel epoll keeps the underlying struct file alive). On macOS, kqueue removes registrations on close, but only for the last reference. The safe order is always **deregister → close**. RAII via Drop makes this automatic and impossible to skip, *provided* drop elaboration runs reliably. If drop elaboration is shaky in Riven today, document a `close()` method as the explicit-cleanup escape hatch and have the framework call it before drop — belt and suspenders until the compiler matures.
+**Why**: closing a registered fd is the most fertile bug-source in epoll/kqueue code. On Linux, `close()` on a `dup`'d fd does *not* remove the registration (the kernel epoll keeps the underlying struct file alive). On macOS, kqueue removes registrations on close, but only for the last reference. The safe order is always **deregister → close**. RAII via Drop makes this automatic and impossible to skip, *provided* drop elaboration runs reliably. If drop elaboration is shaky in Ruxen today, document a `close()` method as the explicit-cleanup escape hatch and have the framework call it before drop — belt and suspenders until the compiler matures.
 
 ---
 

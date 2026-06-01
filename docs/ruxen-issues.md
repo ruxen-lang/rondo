@@ -1,15 +1,15 @@
-# Riven compiler issues found while building Rondo
+# Ruxen compiler issues found while building Rondo
 
 A running log of compiler gaps + parser quirks encountered while
-building Rondo (a Sinatra-style web framework on Riven). Each entry
+building Rondo (a Sinatra-style web framework on Ruxen). Each entry
 has: a minimal reproducer, the fix or current workaround, and
-whether the upstream Riven repo has it patched.
+whether the upstream Ruxen repo has it patched.
 
 Some of these I fixed in-place and committed upstream during this
 session; the rest are documented workarounds that Rondo applies
 today and need real fixes later.
 
-Date: 2026-05-23. Riven branch: `v1-missing-features`.
+Date: 2026-05-23. Ruxen branch: `v1-missing-features`.
 
 ---
 
@@ -23,16 +23,16 @@ Date: 2026-05-23. Riven branch: `v1-missing-features`.
 itself was correct; the return value was wrong.
 
 **Root cause:** `mir/lower/expr/assign.rs:42-48` unconditionally
-inserted `riven_dealloc(R)` before `Assign { dest: R, value: Use(X) }`
+inserted `ruxen_dealloc(R)` before `Assign { dest: R, value: Use(X) }`
 when `R` was a heap-owned local being rebound. When `X` came from
 a call returning `self`, `X` aliased `R` — the dealloc freed the
 very heap object the assign re-read. Use-after-free.
 
 **Fix:** new post-lowering pass
-`drops::elide_returns_self_realloc` (riven commit `0a12b18`).
+`drops::elide_returns_self_realloc` (ruxen commit `0a12b18`).
 Identifies functions returning their first param (`Return(Some(Use(params[0])))`
 on every returning block), walks every block looking for the
-buggy triple `Call X = F(R,…) ; riven_dealloc(R) ; Assign R = X`
+buggy triple `Call X = F(R,…) ; ruxen_dealloc(R) ; Assign R = X`
 where `F` is in the returns-self set, and removes the dealloc.
 
 ### F2. Match-arm pattern bindings had `Ty::Infer` instead of payload type
@@ -55,13 +55,13 @@ the symbol table BEFORE the arm body is inferred. Handles built-in
 defined enums (looks up the variant by `variant_idx`, reads
 payload tys from `DefKind::EnumVariant.kind`, substitutes generic
 params using the scrutinee's `generic_args`). Tuple / Struct /
-Or / Ref / Wildcard / Rest also handled. Riven commit `9c7028b`.
+Or / Ref / Wildcard / Rest also handled. Ruxen commit `9c7028b`.
 
 ### F3. Nested multi-statement match arms didn't parse
 
 **Symptom:**
 
-```riven
+```ruxen
 match a
   Some(x) ->
     match b
@@ -87,7 +87,7 @@ header" as a termination signal. `looks_like_sibling_match_arm`
 peeks up to 16 tokens for `->` at the current bracket depth,
 hard-stopping at any statement-starting keyword
 (`let`/`var`/`if`/`while`/`for`/`match`/`return`/`break`/
-`continue`), newline at depth 0, or terminator. Riven commit
+`continue`), newline at depth 0, or terminator. Ruxen commit
 `0257989`.
 
 ### F4. Option's `Some` variant_idx off-by-one in MIR
@@ -104,7 +104,7 @@ So `Some(x)` matched the `variant_idx == 0` arm and got an empty
 `variant_field_types`, which fell back to `Ty::Int`.
 
 **Fix:** flip the variant-idx guard so `Some(T)` matches
-`variant_idx == 1`. Result's arms were already correct. Riven
+`variant_idx == 1`. Result's arms were already correct. Ruxen
 commit `80acb14`.
 
 ### F5. `AsyncTcpListener.accept` died on `ECONNABORTED`
@@ -124,7 +124,7 @@ connection can abort (peer RST between SYN/ACK and accept).
 Blocking accept hides this; the kernel silently dequeues and
 keeps blocking. Non-blocking accept surfaces it as
 `errno == ECONNABORTED`.
-`library/std/async_net/runtime/async_net.c::riven_async_accept_step`
+`library/std/async_net/runtime/async_net.c::ruxen_async_accept_step`
 correctly retried on `EINTR` and parked on `EAGAIN/EWOULDBLOCK`
 but treated every other errno — including `ECONNABORTED` — as
 fatal, bubbling it up to the user's accept loop.
@@ -133,7 +133,7 @@ fatal, bubbling it up to the user's accept loop.
 the C state machine, don't surface to user code). Matches Go's
 `net` package, tokio, and libevent behaviour. Same fix applied
 to the sync side
-(`library/std/net/runtime/tcp.c::riven_tcp_listener_accept`) so
+(`library/std/net/runtime/tcp.c::ruxen_tcp_listener_accept`) so
 the BSD gotcha is plugged across the whole stack — `EINTR` is
 still propagated there so cooperative SIGINT loops keep working.
 
@@ -148,7 +148,7 @@ the bottleneck — only 3-6 worker threads ever alive under a
 thread can spawn them).
 
 **Root cause:**
-`library/std/sync/runtime/thread.c::riven_thread_spawn` called
+`library/std/sync/runtime/thread.c::ruxen_thread_spawn` called
 `pthread_create(&tid, NULL, …)` — `NULL` attr means OS default
 stack size. macOS default is 512KB; XNU's per-thread setup cost
 scales with the configured stack.
@@ -156,11 +156,11 @@ scales with the configured stack.
 **Fix:** Set an explicit default via
 `pthread_attr_setstacksize`. Initially 256 KB (16× macOS's
 `PTHREAD_STACK_MIN`). Later **rolled back to 512 KB** in
-riven `1d6e245` — matching macOS's pthread default exactly —
+ruxen `1d6e245` — matching macOS's pthread default exactly —
 because 256 KB was below the OS default and risky for FFI
 handlers whose stack depth gets non-trivial (LLVM-generated
 code with large stack frames, deep recursive parsers).
-Overridable per-process via `RIVEN_THREAD_STACK_KB` env
+Overridable per-process via `RUXEN_THREAD_STACK_KB` env
 (0 = OS default — useful for stack-overflow debugging on
 Linux where the OS default is 8 MB).
 
@@ -171,17 +171,17 @@ exhausted the kernel's file table (`kern.maxfiles` hit on macOS),
 wedging the box. Per-connection lsof showed accepted sockets
 stuck in TIME_WAIT with the fd still held by the server process.
 
-**Root cause:** `riven_async_tcp_stream_shutdown` (called by
+**Root cause:** `ruxen_async_tcp_stream_shutdown` (called by
 `AsyncCloseFuture.poll`) issued `shutdown(SHUT_RDWR)` but relied
-on Riven's drop elaboration to invoke `AsyncTcpStream`'s
+on Ruxen's drop elaboration to invoke `AsyncTcpStream`'s
 FFI-bound `def drop` for the stream field of the close future.
 That drop hook wasn't firing reliably, so every accepted
 connection leaked its fd.
 
-**Fix:** `riven_async_tcp_stream_shutdown` now does
+**Fix:** `ruxen_async_tcp_stream_shutdown` now does
 `shutdown(SHUT_RDWR)` + `close(fd)` + mark the stream closed
 inline. The `close` surface is authoritative — by the time
-`block_on(stream.close())` returns Ready, the fd is gone. Riven
+`block_on(stream.close())` returns Ready, the fd is gone. Ruxen
 `1b888b8`.
 
 ### F8. Per-poll register/deregister churn on AsyncTcpStream
@@ -196,12 +196,12 @@ destabilised the worker (suspect slot-table accumulation in the
 reactor under the churn).
 
 **Fix:** Persistent fd registration. `AsyncTcpStream` registers
-its fd ONCE at construction (in `riven_async_tcp_stream_from_fd`)
+its fd ONCE at construction (in `ruxen_async_tcp_stream_from_fd`)
 with edge-triggered readiness (`EV_CLEAR` / `EPOLLET`), stores
 the slot handle on the stream struct, and deregisters once at
 drop. Read/Write futures only consult `check_fired` — they don't
 touch the reactor's slot table per poll. Same shape as tokio's
-`AsyncFd`. Riven `c6f1e2d`. RPS up 9% (51 k → 56 k); W18 crash
+`AsyncFd`. Ruxen `c6f1e2d`. RPS up 9% (51 k → 56 k); W18 crash
 disappears.
 
 ### F9. `AsyncTcpStream.read_with_timeout` — idle timeout on async reads
@@ -213,11 +213,11 @@ forever — keep-alive in production needs an idle timeout
 (nginx defaults to 75 s, envoy to 60 s).
 
 **Fix:** New future `AsyncReadWithTimeoutFuture` pairs the read
-state machine with a per-poll `riven_reactor_register_timer(ns)`.
+state machine with a per-poll `ruxen_reactor_register_timer(ns)`.
 Park waits on EITHER fd-readiness OR timer fire; the next poll
 resolves the race deterministically and the loser's slot is
 deregistered. Returns `Err(IoError.TimedOut)` on timer win.
-Riven `8d63e9d`. Rondo uses it with a 60 s default; verified
+Ruxen `8d63e9d`. Rondo uses it with a 60 s default; verified
 end-to-end (a silent client is dropped at 3006 ms when
 configured for 3 s).
 
@@ -234,7 +234,7 @@ registered with itself. `Waker.wake()` writes 8 bytes to the
 wake fd; the parked thread unparks and re-polls. `Task.spawn_raw`
 adds futures to a per-reactor task table; `block_on` becomes a
 real scheduler loop driving the entry future + all spawned
-tasks. Riven `59b8de6`. Single-threaded per reactor (no
+tasks. Ruxen `59b8de6`. Single-threaded per reactor (no
 cross-thread spawn yet). Verified via a 100-task fixture
 (sum 1..100 = 5050). Rondo now uses this in the worker accept
 loop: each accepted
@@ -253,7 +253,7 @@ expression-start (identifier, method call, `if`, assignment)
 parses as a SINGLE expression — subsequent lines are not part of
 the body.
 
-```riven
+```ruxen
 Some(params) ->
   matched_idx = i         # ← consumed as the whole arm body
   matched_params = params # ← parser thinks this starts the next arm
@@ -263,14 +263,14 @@ None -> 0                 # ← "expected expression, found Arrow"
 **Workaround in Rondo:** lead the body with a `let _foo = …`
 binding to force block parsing:
 
-```riven
+```ruxen
 Some(params) ->
   let _captured = params
   matched_idx = i
   matched_params = _captured
 ```
 
-(see `Rondo.dispatch` in `src/lib.rvn` for the live example).
+(see `Rondo.dispatch` in `src/lib.rx` for the live example).
 
 **Proper fix:** `parser::is_expression_start` is consulted in
 `parse_match_arm` to choose Expr-vs-Block. The single-vs-block
@@ -294,7 +294,7 @@ keep the arm body as a single call.
 ### W3. `()` doesn't reliably parse as an expression
 
 **Symptom:** Used as a no-op match arm body (`None -> ()`),
-the `()` doesn't always parse — Riven seems to lack the unit
+the `()` doesn't always parse — Ruxen seems to lack the unit
 literal as a standalone expression in some positions.
 
 **Workaround:** Use `0` (or any other expression of compatible
@@ -310,7 +310,7 @@ reported as syntax error.
 **Workaround:** Extract closure bodies into free fns and call
 them from the closure:
 
-```riven
+```ruxen
 app.get(&"/hello/:name", { |req: Request|
   Response.text(&hello_body(&req))   # helper does the work
 })
@@ -331,7 +331,7 @@ the method-call lowering.
 on the returned `Option[&Route]`. Combined with F2 (pattern type
 propagation), the binding's type resolves cleanly.
 
-```riven
+```ruxen
 let n: Int = self.routes.len() as Int
 var i: Int = 0
 while i < n
@@ -353,7 +353,7 @@ type name literally and no monomorphized symbol exists.
 
 **Workaround:** Pattern-match exclusively.
 
-```riven
+```ruxen
 let v = match opt
   Some(x) -> x
   None    -> default
@@ -365,7 +365,7 @@ end
 **Symptom:** Calling `BufReader.Tcp.new(stream).read_line` link-
 fails with undefined symbols `BufReader.Tcp_read_line`,
 `BufReader.Tcp_into_inner`, `BufWriter.Tcp_flush`. The FFI alias
-clause in stdlib (`def read_line as "riven_bufreader_read_line"`)
+clause in stdlib (`def read_line as "ruxen_bufreader_read_line"`)
 should rewrite the mangled callee, but the dotted-module class
 name (`BufReader.Tcp_…`) escapes the rewriter.
 
@@ -384,9 +384,9 @@ or similar to turn those bytes into a String we can feed to
 **Workaround in Rondo:** Same as W7 — skip request parsing over
 sockets for now.
 
-**Proper fix:** Either expose `riven_string_from_utf8(bytes)`
+**Proper fix:** Either expose `ruxen_string_from_utf8(bytes)`
 through stdlib or add a `TcpStream.read_to_string` that delegates
-to the existing `riven_stream_read_to_string` runtime helper
+to the existing `ruxen_stream_read_to_string` runtime helper
 (currently only used by `File` and `Stdin`).
 
 ### W9. `derive Clone` (and other derive keywords) silently ignored
@@ -409,7 +409,7 @@ not in parameter / return-type positions.
 
 **Workaround in Rondo:** All helper fns whose signatures
 reference user types (`Request`, `Response`, `Route`, `Rondo`,
-`TcpStream`) live at the END of `src/lib.rvn`, after the class
+`TcpStream`) live at the END of `src/lib.rx`, after the class
 definitions.
 
 ### W11. `String.split("/")` returns SplitIter on `Str` receivers
@@ -438,10 +438,10 @@ construction. Verbose but correct.
 
 **Symptom:** `pub class Foo` / `pub def bar` errors with
 "expected top-level declaration, found Identifier(\"pub\")".
-Visibility is implicit in Riven; there's no equivalent today.
+Visibility is implicit in Ruxen; there's no equivalent today.
 
 **Workaround in Rondo:** Just omit `pub`. All items in
-`lib.rvn` are accessible to depending packages by default.
+`lib.rx` are accessible to depending packages by default.
 
 ### W14. Path-dep symbols are flat-merged, not module-namespaced
 
@@ -458,7 +458,7 @@ the top level rather than namespaced under `rondo`.
 resolve so `use rondo.X` resolves through `Module(rondo) →
 Class(X)`.
 
-### W15. `Thread.spawn` closure crashes when worker calls `block_on` and captures references — **FIXED in riven `a182502`**
+### W15. `Thread.spawn` closure crashes when worker calls `block_on` and captures references — **FIXED in ruxen `a182502`**
 
 The async-multi listener with 4 workers now boots cleanly and
 serves load (verified by Rondo's bench). Description preserved
@@ -473,7 +473,7 @@ the SIGSEGV.
 
 Setup that crashes:
 
-```riven
+```ruxen
 def async_worker(app: &Rondo, addr: &String) -> Int
   puts "worker: entering"   # never prints
   let bound = block_on(AsyncTcpListener.bind(addr))
@@ -504,9 +504,9 @@ owned `String` via `addr.clone`) AND whose body calls `block_on(...)`.**
 A single-capture closure of a moved value works. A capture-less
 block_on works. The interaction of capture + block_on is the gap.
 
-The Riven side calls this out in
+The Ruxen side calls this out in
 `docs/rondo_v1_blockers.md` cross-reference for B1, citing
-`project_riven_task_spawn_ownership_gap.md` ("Task.spawn already
+`project_ruxen_task_spawn_ownership_gap.md` ("Task.spawn already
 has a drop-elaboration gap; the same shape on Thread.spawn is
 the likely failure mode") — this is exactly that mode.
 
@@ -514,14 +514,14 @@ the likely failure mode") — this is exactly that mode.
 shipped but its body falls back to running the async accept
 loop on the main thread (equivalent to `listen_async`) and
 prints a warning if the caller asked for >1 worker. The
-`SO_REUSEPORT` runtime patch (riven `async_net.c`,
+`SO_REUSEPORT` runtime patch (ruxen `async_net.c`,
 docs/rondo_v1_blockers.md §B5) is in place and verified by
 the `reuseport-check` mode of rondo-smoke (`bind` from two
 threads on the same port both succeed), so the only thing
 blocking real multi-core serving is this Thread.spawn capture
 gap.
 
-**Acceptance test for the fix:** the riven-side fixture
+**Acceptance test for the fix:** the ruxen-side fixture
 should match this exact shape — capture `&Rondo` and `&String`
 (or owned `String`) in a `Thread.spawn` closure whose body
 calls `block_on(...)`, and ensure the worker's first `puts`
@@ -548,21 +548,21 @@ move-semantics.
 ### W17. FFI-bound `def drop` doesn't always fire for class fields of a future
 
 **Symptom:** `AsyncCloseFuture.stream` had a
-`def drop as "riven_async_tcp_stream_drop"` but the field's
+`def drop as "ruxen_async_tcp_stream_drop"` but the field's
 drop wasn't invoked when the close future itself dropped,
 leaking the fd. The shape is: future class with a class-typed
 field whose class has a `lib`-bound drop hook.
 
 **Workaround in current Rondo:** the `close` C-side method does
 the fd close inline (not just `shutdown`) so the stream's own
-drop becomes a no-op safety net. See riven `1b888b8`.
+drop becomes a no-op safety net. See ruxen `1b888b8`.
 
 **Acceptance test for the fix:** drop elaboration should walk
 class field types and emit FFI-aliased drop calls in
 declaration order on scope exit — for future classes, this
 fires when `block_on` returns the future's Output.
 
-### W18. Many keep-alive iterations on a single async TCP connection eventually crash the worker — **FIXED in riven `c6f1e2d`**
+### W18. Many keep-alive iterations on a single async TCP connection eventually crash the worker — **FIXED in ruxen `c6f1e2d`**
 
 The persistent-fd-registration shape (F8) eliminates the
 per-cycle reactor slot churn that caused this. Rondo's
@@ -570,9 +570,9 @@ keep-alive bench now sustains unbounded iterations per
 connection (verified across c=50/200/800 and 800+ requests per
 connection without incident).
 
-### W19. `.await` inside `while` loop body — E1115 — **FIXED in Riven `115a56f`**
+### W19. `.await` inside `while` loop body — E1115 — **FIXED in Ruxen `115a56f`**
 
-**Symptom:** the riven compiler used to emit **E1115** when an
+**Symptom:** the ruxen compiler used to emit **E1115** when an
 `async def` body contained a `while` loop whose body performed a
 `.await`. Async-lowering's state-machine codegen did not model
 the loop-back edge — every `.await` became a state transition, but
@@ -582,7 +582,7 @@ state that the pass did not emit.
 **Why this matters for Rondo:** the natural shape for
 intra-worker concurrency is
 
-```riven
+```ruxen
 async def serve(app: &Rondo, l: AsyncTcpListener)
   while keep_going
     let pair = l.accept.await
@@ -607,6 +607,53 @@ fixed-count spawns but was not viable for accept loops.
 
 ---
 
+### W20. `ruxen test` v1 is single-file — can't link the library under test
+
+**Symptom:** `ruxen test` discovers `tests/**.rx`, but a test file
+cannot reference Rondo's own classes. Both forms fail:
+
+```rx
+# tests/dispatch_test.rx
+use rondo.Rondo            # error: expected expression, found Use
+Tester.describe("x") do |t: &var Tester|
+  t.it("y") do
+    let r = Response.text(&"hi")   # error: undefined variable `Response`
+    t.expect(r.status).to_eq(200)
+  end
+end
+```
+
+**Root cause** (read from the toolchain source):
+
+1. The runner wraps the **entire** test-file body inside a
+   synthesised `def main` (`src/ruxenc/src/test_runner.rs`,
+   `synthesise_wrapper`): `def main … <your file verbatim> … r.execute end`.
+   So a test file may contain **only statements** — a top-level
+   `def`, `class`, or `use` lands inside `main` and is a parse error.
+   You cannot define handler helper fns, and you cannot `use` anything.
+2. Each wrapper compiles via the **single-file** `ruxenc` driver, not
+   project-aware `ruxen build`. `src/ruxenc/src/compile.rs` is explicit:
+   *"today ruxenc is single-file, so the dep list is empty."* The
+   project's own `src/*.rx` and any dependency are **not** flat-merged
+   in, so none of Rondo's symbols exist in the test binary. `tests/support/`
+   is only skipped from discovery — it is not linked either.
+
+**Consequence:** the merged-source workaround (concatenate `src/*.rx`
+ahead of the test) also fails — those `def`/`class`/doc-comment lines
+end up nested inside the synthesised `main`. In v1 only std-prelude
+symbols and locally-`let`/`var`-bound values are reachable, so the
+framework can validate self-contained logic but **cannot exercise
+Rondo's public API** (`Rondo.dispatch`, `Request.parse`, `Response.*`).
+
+**Workaround in use:** the dispatch seam stays covered by the
+in-process `Rondo.dispatch(req) -> Response` checks in
+`rondo-smoke`'s `main` (the `✓`/`✗` assertions), which compile through
+`ruxen build` and therefore see the whole library. Migrate those into
+`ruxen test` files once the runner gains multi-file / dependency
+linking (tracked alongside W14's flat-merge resolver work).
+
+---
+
 ## Summary
 
 Rondo's v0.4 surface (route DSL with five HTTP verbs, path-param
@@ -620,5 +667,5 @@ W6 (Option.unwrap on generics), W7 (dotted-class FFI alias),
 and W8 (bytes→String).
 
 The four upstream fixes I committed (F1-F4) are infrastructure
-that benefits every external Riven project, not just Rondo —
+that benefits every external Ruxen project, not just Rondo —
 each was already a footgun for any user who hit the right shape.

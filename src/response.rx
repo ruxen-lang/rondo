@@ -5,7 +5,7 @@
 ##
 ## Builders return `self` so they chain:
 ##
-## ```riven
+## ```ruxen
 ## Response.json(&body).with_status(201).with_header(&"x-request-id", &id)
 ## ```
 class Response
@@ -124,7 +124,7 @@ class Response
 
   ## Cookie with an explicit attribute string. Example:
   ##
-  ## ```riven
+  ## ```ruxen
   ## resp.with_cookie_attrs(&"prefs", &"dark", &"Max-Age=2592000; Path=/")
   ## ```
   ##

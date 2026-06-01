@@ -1,0 +1,116 @@
+# Rondo.dispatch pipeline tests — the pure, socket-free seam.
+# Status assertions use Int `to_eq`. Body assertions use the generic
+# `expect(...).to_eq` on String — now exact: typeck infers the call's
+# type param from the argument and the result is monomorphized to the
+# String specialization (see docs/ruxen-upstream-issues.md Finding 3).
+Tester.describe("Rondo.dispatch") do |t: &var Tester|
+  t.it("routes GET / to its handler (200 + exact body)") do
+    var app = Rondo.new
+    app.get(&"/", { |req: &Request| Response.text(&"hello, world") })
+    let res = app.dispatch(Request.build(&"GET", &"/", &""))
+    t.expect(res.status).to_eq(200)
+    t.expect(res.body).to_eq(String.from(&"hello, world"))
+  end
+
+  t.it("returns 404 for an unregistered path") do
+    var app = Rondo.new
+    app.get(&"/", { |req: &Request| Response.text(&"home") })
+    t.expect(app.dispatch(Request.build(&"GET", &"/nope", &"")).status).to_eq(404)
+  end
+
+  t.it("returns 404 when path matches but method does not") do
+    var app = Rondo.new
+    app.get(&"/", { |req: &Request| Response.text(&"home") })
+    t.expect(app.dispatch(Request.build(&"POST", &"/", &"")).status).to_eq(404)
+  end
+
+  t.it("before-hook short-circuits /admin with 401") do
+    var app = Rondo.new
+    app.before({ |req: &Request| if req.path.starts_with(&"/admin") Some(Response.text(&"no").with_status(401)) else None end })
+    app.get(&"/admin", { |req: &Request| Response.text(&"secret") })
+    t.expect(app.dispatch(Request.build(&"GET", &"/admin", &"")).status).to_eq(401)
+  end
+
+  t.it("before-hook passes /public through (200)") do
+    var app = Rondo.new
+    app.before({ |req: &Request| if req.path.starts_with(&"/admin") Some(Response.text(&"no").with_status(401)) else None end })
+    app.get(&"/public", { |req: &Request| Response.text(&"open") })
+    t.expect(app.dispatch(Request.build(&"GET", &"/public", &"")).status).to_eq(200)
+  end
+
+  t.it("an empty route table returns 404") do
+    var app = Rondo.new
+    t.expect(app.dispatch(Request.build(&"GET", &"/", &"")).status).to_eq(404)
+  end
+
+  t.it("HEAD falls back to the matching GET route (200)") do
+    var app = Rondo.new
+    app.get(&"/", { |req: &Request| Response.text(&"hello, world") })
+    t.expect(app.dispatch(Request.build(&"HEAD", &"/", &"")).status).to_eq(200)
+  end
+
+  t.it("HEAD with no matching GET route returns 404") do
+    var app = Rondo.new
+    app.get(&"/", { |req: &Request| Response.text(&"x") })
+    t.expect(app.dispatch(Request.build(&"HEAD", &"/nope", &"")).status).to_eq(404)
+  end
+
+  t.it("an after-hook rewrites the response") do
+    var app = Rondo.new
+    app.get(&"/", { |req: &Request| Response.text(&"x") })
+    app.after({ |req: &Request, resp: Response|
+      var r = resp
+      r.with_header(&"x-after", &"ran")
+      r
+    })
+    let res = app.dispatch(Request.build(&"GET", &"/", &""))
+    let v = match res.headers.get(&"x-after")
+      Some(x) -> x
+      None    -> String.from(&"<none>")
+    end
+    t.expect(v).to_eq(String.from(&"ran"))
+  end
+
+  t.it("error-handler substitutes the body when the status matches") do
+    var app = Rondo.new
+    app.on_error(404, { |req: &Request, resp: Response| Response.text(&"custom not found").with_status(404) })
+    let res = app.dispatch(Request.build(&"GET", &"/missing", &""))
+    t.expect(res.status).to_eq(404)
+    let _b = StringMatcher.new(&res.body).to_include(&"custom not found")
+  end
+
+  t.it("error-handler does not fire when the status does not match") do
+    var app = Rondo.new
+    app.on_error(500, { |req: &Request, resp: Response| Response.text(&"five hundred").with_status(500) })
+    app.get(&"/", { |req: &Request| Response.text(&"ok body") })
+    let res = app.dispatch(Request.build(&"GET", &"/", &""))
+    t.expect(res.status).to_eq(200)
+    let _b = StringMatcher.new(&res.body).to_include(&"ok body")
+  end
+
+  t.it("static fallback returns 404 when no public folder is configured") do
+    var app = Rondo.new
+    t.expect(app.dispatch(Request.build(&"GET", &"/asset.txt", &"")).status).to_eq(404)
+  end
+
+  t.it("static fallback rejects path traversal with 404") do
+    var app = Rondo.new
+    app.set_public_folder(&"/tmp")
+    t.expect(app.dispatch(Request.build(&"GET", &"/../etc/hosts", &"")).status).to_eq(404)
+  end
+
+  t.it("static fallback returns 404 for a missing file") do
+    var app = Rondo.new
+    app.set_public_folder(&"/tmp")
+    t.expect(app.dispatch(Request.build(&"GET", &"/rondo-no-such-file-xyz.txt", &"")).status).to_eq(404)
+  end
+
+  t.it("static fallback serves an existing file from the public folder") do
+    let _w = FS.write(&"/tmp/rondo-branch-static.txt", &"static body here")
+    var app = Rondo.new
+    app.set_public_folder(&"/tmp")
+    let res = app.dispatch(Request.build(&"GET", &"/rondo-branch-static.txt", &""))
+    t.expect(res.status).to_eq(200)
+    let _b = StringMatcher.new(&res.body).to_include(&"static body here")
+  end
+end

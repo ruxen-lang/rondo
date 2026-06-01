@@ -1,11 +1,11 @@
-## Rondo — a Sinatra-style web framework for Riven.
+## Rondo — a Sinatra-style web framework for Ruxen.
 ##
 ## The form a request takes: A (route) -> B (handler) -> A. That's a
 ## rondo. Routes are the chorus; verses are yours.
 ##
 ## ## Usage
 ##
-## ```riven
+## ```ruxen
 ## use rondo.Rondo
 ## use rondo.Response
 ##
@@ -42,15 +42,15 @@
 ##
 ## ## Package layout
 ##
-## - `helpers.rvn`     — pure free helpers (primitive-only signatures)
-## - `request.rvn`     — `Request` class
-## - `response.rvn`    — `Response` class
-## - `route.rvn`       — `Route` class
-## - `rondo.rvn`       — `Rondo` class (registration DSL + dispatch
+## - `helpers.rx`     — pure free helpers (primitive-only signatures)
+## - `request.rx`     — `Request` class
+## - `response.rx`    — `Response` class
+## - `route.rx`       — `Route` class
+## - `rondo.rx`       — `Rondo` class (registration DSL + dispatch
 ##                       + the public `run` / overloaded `listen` entries)
-## - `router.rvn`      — late-binding helpers (signatures reference
+## - `router.rx`      — late-binding helpers (signatures reference
 ##                       user types)
-## - `async_server.rvn` — async TCP server: per-worker reactor +
+## - `async_server.rx` — async TCP server: per-worker reactor +
 ##                        keep-alive request loop
 ##
 ## ## Architecture
@@ -63,7 +63,7 @@
 ##
 ## Listen overloads:
 ##
-## ```riven
+## ```ruxen
 ## app.listen()                  # 127.0.0.1:3000
 ## app.listen(9292)              # 127.0.0.1:9292
 ## app.listen(&"0.0.0.0")        # 0.0.0.0:3000
@@ -71,5 +71,5 @@
 ## app.listen(&"127.0.0.1:8421", 4) # full address + workers
 ## ```
 ##
-## Note: String, Array, Map, Option, Result are all in the Riven
+## Note: String, Array, Map, Option, Result are all in the Ruxen
 ## prelude — no `use` needed.

@@ -1,0 +1,66 @@
+# Request.build, Request.parse, and the param/query/header accessors.
+Tester.describe("Request") do |t: &var Tester|
+  t.it("build sets method, path, and body") do
+    let req = Request.build(&"POST", &"/echo", &"hello")
+    t.expect(req.method.clone).to_eq(String.from(&"POST"))
+    t.expect(req.path.clone).to_eq(String.from(&"/echo"))
+    t.expect(req.body.clone).to_eq(String.from(&"hello"))
+  end
+
+  t.it("parse reads method/path/body and a header from the wire") do
+    let raw = "GET /hello/ada HTTP/1.1\r\nHost: localhost\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nhello"
+    match Request.parse(&raw)
+      Some(req) ->
+        let _ = t.expect(req.method.clone).to_eq(String.from(&"GET"))
+        t.expect(req.path.clone).to_eq(String.from(&"/hello/ada"))
+        t.expect(req.body.clone).to_eq(String.from(&"hello"))
+        let ct = match req.header(&"content-type")
+          Some(v) -> v
+          None    -> String.from(&"<none>")
+        end
+        t.expect(ct).to_eq(String.from(&"text/plain"))
+      None ->
+        let _ = BoolMatcher.new(false).to_be_truthy
+    end
+  end
+
+  t.it("parse extracts the query string into params") do
+    match Request.parse(&"GET /search?q=hello&page=2 HTTP/1.1\r\n\r\n")
+      Some(req) ->
+        let _ = t.expect(req.path.clone).to_eq(String.from(&"/search"))
+        let q = match req.param(&"q")
+          Some(v) -> v
+          None    -> String.from(&"<none>")
+        end
+        t.expect(q).to_eq(String.from(&"hello"))
+        let page = match req.param(&"page")
+          Some(v) -> v
+          None    -> String.from(&"<none>")
+        end
+        t.expect(page).to_eq(String.from(&"2"))
+      None ->
+        let _ = BoolMatcher.new(false).to_be_truthy
+    end
+  end
+
+  t.it("parse rejects malformed input") do
+    let rejected = match Request.parse(&"GARBAGE")
+      Some(_) -> false
+      None    -> true
+    end
+    let _ = BoolMatcher.new(rejected).to_be_truthy
+  end
+
+  t.it("parse reads a cookie from the Cookie header") do
+    match Request.parse(&"GET / HTTP/1.1\r\nCookie: user=ada\r\n\r\n")
+      Some(req) ->
+        let who = match req.cookie(&"user")
+          Some(v) -> v
+          None    -> String.from(&"<none>")
+        end
+        let _ = t.expect(who).to_eq(String.from(&"ada"))
+      None ->
+        let _ = BoolMatcher.new(false).to_be_truthy
+    end
+  end
+end

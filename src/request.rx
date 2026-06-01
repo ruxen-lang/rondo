@@ -113,7 +113,7 @@ class Request
   ## or the body is empty. Same parser as the query string —
   ## `name=value&name=value`, no URL decoding in v0.x.
   ##
-  ## ```riven
+  ## ```ruxen
   ## app.post(&"/login", { |req: &Request|
   ##   let fields = req.form
   ##   match fields.get(&"username")

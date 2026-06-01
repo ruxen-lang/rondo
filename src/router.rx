@@ -1,8 +1,8 @@
 ## Late-binding helpers — signatures reference user types
 ## (`Request`, `Route`, `Response`, `File`). Kept out of the
 ## helpers file so the dependency direction is unambiguous:
-## these depend on the class declarations in `request.rvn` /
-## `response.rvn` / `route.rvn`.
+## these depend on the class declarations in `request.rx` /
+## `response.rx` / `route.rx`.
 
 # Split "/path?query=string" into Request.path + .query and parse
 # the query pairs into Request.params. Both halves are

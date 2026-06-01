@@ -1,0 +1,71 @@
+# Built-in CORS middleware: default allow-origin, OPTIONS preflight, and
+# custom origin/credentials echoing.
+Tester.describe("CORS middleware") do |t: &var Tester|
+  t.it("cors() adds access-control-allow-origin: * to a normal response") do
+    var app = Rondo.new
+    app.cors
+    app.get(&"/api", { |req: &Request| Response.json(&"{}") })
+    let res = app.dispatch(Request.build(&"GET", &"/api", &""))
+    let origin = match res.headers.get(&"access-control-allow-origin")
+      Some(v) -> v
+      None    -> String.from(&"<none>")
+    end
+    t.expect(origin).to_eq(String.from(&"*"))
+  end
+
+  t.it("an OPTIONS preflight short-circuits to 204") do
+    var app = Rondo.new
+    app.cors
+    app.get(&"/api", { |req: &Request| Response.json(&"{}") })
+    t.expect(app.dispatch(Request.build(&"OPTIONS", &"/api", &"")).status).to_eq(204)
+  end
+
+  t.it("a custom origin and credentials flag are echoed back") do
+    var app = Rondo.new
+    app.cors_origin(&"https://client.example")
+    app.cors_credentials(true)
+    app.get(&"/api", { |req: &Request| Response.text(&"ok") })
+    let res = app.dispatch(Request.build(&"GET", &"/api", &""))
+    let origin = match res.headers.get(&"access-control-allow-origin")
+      Some(v) -> v
+      None    -> String.from(&"<none>")
+    end
+    let _ = t.expect(origin).to_eq(String.from(&"https://client.example"))
+    let cred = match res.headers.get(&"access-control-allow-credentials")
+      Some(v) -> v
+      None    -> String.from(&"<none>")
+    end
+    t.expect(cred).to_eq(String.from(&"true"))
+  end
+
+  t.it("default cors() omits credentials and Vary (origin is *)") do
+    var app = Rondo.new
+    app.cors
+    app.get(&"/api", { |req: &Request| Response.text(&"ok") })
+    let res = app.dispatch(Request.build(&"GET", &"/api", &""))
+    let has_cred = match res.headers.get(&"access-control-allow-credentials")
+      Some(_) -> true
+      None    -> false
+    end
+    let _c = BoolMatcher.new(has_cred).to_be_falsy
+    let has_vary = match res.headers.get(&"vary")
+      Some(_) -> true
+      None    -> false
+    end
+    let _v = BoolMatcher.new(has_vary).to_be_falsy
+  end
+
+  t.it("CORS headers are applied to a before-hook short-circuit response") do
+    var app = Rondo.new
+    app.cors
+    app.before({ |req: &Request| Some(Response.text(&"denied").with_status(403)) })
+    app.get(&"/api", { |req: &Request| Response.json(&"{}") })
+    let res = app.dispatch(Request.build(&"GET", &"/api", &""))
+    t.expect(res.status).to_eq(403)
+    let origin = match res.headers.get(&"access-control-allow-origin")
+      Some(v) -> v
+      None    -> String.from(&"<none>")
+    end
+    t.expect(origin).to_eq(String.from(&"*"))
+  end
+end

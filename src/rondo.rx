@@ -20,7 +20,7 @@ class Rondo
   # status that has a registered error handler, the handler is
   # invoked to produce the actual response. Implemented as
   # parallel arrays because `Map[Int, any Fn(...)]` doesn't
-  # round-trip through Riven's generic-map storage cleanly.
+  # round-trip through Ruxen's generic-map storage cleanly.
   error_codes: Array[Int]
   error_handlers: Array[any Fn(&Request, Response) -> Response]
   # Filesystem root for static file serving. Set via
@@ -230,7 +230,7 @@ class Rondo
   ## Indexed-loop iteration is used in place of the natural
   ## `for route in self.routes.iter` because the iterator-element
   ## codegen path doesn't carry the element type through to method
-  ## dispatch (still an open Riven gap). `Array[T].get(i)` returns
+  ## dispatch (still an open Ruxen gap). `Array[T].get(i)` returns
   ## `Option[&T]` whose payload IS typed correctly post-pattern-
   ## propagation, so `match` on the result gives a concretely-typed
   ## `&Route` binding.

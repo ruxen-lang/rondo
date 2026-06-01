@@ -1,0 +1,48 @@
+# Pure helpers in router.rx. (split_path_query_into is exercised via
+# Request.parse in request_test; try_static_or_404 / find_get_route_for /
+# invoke_route_handler via the dispatch tests. The socket-bound helpers in
+# async_server.rx — accept loops, read_full_request, the worker entries —
+# are end-to-end/server concerns, not unit-testable in-process.)
+Tester.describe("router helpers") do |t: &var Tester|
+  t.it("should_keep_alive is false when Connection: close") do
+    let keep = match Request.parse(&String.from(&"GET / HTTP/1.1\r\nConnection: close\r\n\r\n"))
+      Some(req) -> should_keep_alive(&req)
+      None      -> true
+    end
+    let _k = BoolMatcher.new(keep).to_be_falsy
+  end
+
+  t.it("should_keep_alive is true when Connection: keep-alive") do
+    let keep = match Request.parse(&String.from(&"GET / HTTP/1.1\r\nConnection: keep-alive\r\n\r\n"))
+      Some(req) -> should_keep_alive(&req)
+      None      -> false
+    end
+    let _k = BoolMatcher.new(keep).to_be_truthy
+  end
+
+  t.it("should_keep_alive defaults to true with no Connection header") do
+    let keep = match Request.parse(&String.from(&"GET / HTTP/1.1\r\nHost: x\r\n\r\n"))
+      Some(req) -> should_keep_alive(&req)
+      None      -> false
+    end
+    let _k = BoolMatcher.new(keep).to_be_truthy
+  end
+
+  t.it("mime_type_for maps known extensions and defaults to octet-stream") do
+    t.expect(mime_type_for(&String.from(&"/page.html"))).to_eq(String.from(&"text/html; charset=utf-8"))
+    t.expect(mime_type_for(&String.from(&"/page.htm"))).to_eq(String.from(&"text/html; charset=utf-8"))
+    t.expect(mime_type_for(&String.from(&"/style.css"))).to_eq(String.from(&"text/css; charset=utf-8"))
+    t.expect(mime_type_for(&String.from(&"/app.js"))).to_eq(String.from(&"application/javascript; charset=utf-8"))
+    t.expect(mime_type_for(&String.from(&"/data.json"))).to_eq(String.from(&"application/json"))
+    t.expect(mime_type_for(&String.from(&"/logo.png"))).to_eq(String.from(&"image/png"))
+    t.expect(mime_type_for(&String.from(&"/pic.jpeg"))).to_eq(String.from(&"image/jpeg"))
+    t.expect(mime_type_for(&String.from(&"/vec.svg"))).to_eq(String.from(&"image/svg+xml"))
+    t.expect(mime_type_for(&String.from(&"/readme.txt"))).to_eq(String.from(&"text/plain; charset=utf-8"))
+    t.expect(mime_type_for(&String.from(&"/archive.zip"))).to_eq(String.from(&"application/zip"))
+  end
+
+  t.it("mime_type_for falls back to octet-stream for unknown / no extension") do
+    t.expect(mime_type_for(&String.from(&"/binary.xyz"))).to_eq(String.from(&"application/octet-stream"))
+    t.expect(mime_type_for(&String.from(&"/noext"))).to_eq(String.from(&"application/octet-stream"))
+  end
+end
