@@ -86,8 +86,8 @@ class Request
     end
 
     # Cookie header → req.cookies map. The Cookie header (singular
-    # in HTTP/1.1) carries `name=value; name=value; …`. We don't
-    # URL-decode here for the same reason `parse_query_into` doesn't.
+    # in HTTP/1.1) carries `name=value; name=value; …`. Values are
+    # URL-decoded the same way query params are (see parse_cookies_into).
     let cookie_hdr = r.headers.get(&"cookie")
     if cookie_hdr.is_some()
       let cookies_str = cookie_hdr.unwrap()
@@ -111,7 +111,7 @@ class Request
   ## return the field map. Returns an empty map when the content
   ## type doesn't match (Sinatra's `params` would also be empty)
   ## or the body is empty. Same parser as the query string —
-  ## `name=value&name=value`, no URL decoding in v0.x.
+  ## `name=value&name=value`, with `%xx`/`+` URL-decoding applied.
   ##
   ## ```ruxen
   ## app.post(&"/login", { |req: &Request|

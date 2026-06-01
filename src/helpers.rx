@@ -133,10 +133,8 @@ def copy_one_param(name: &String, src: &Map[String, String], dst: &var Map[Strin
 end
 
 # Parse a URL-encoded query string ("foo=bar&baz=qux") into the
-# params map. URL-decoding is deliberately NOT performed in v0.2:
-# Rondo passes the raw segments through, leaving %-decoding to a
-# future helper (or to handlers that need it). Sinatra defers
-# decoding to a Rack middleware too.
+# params map. Each name and value is URL-decoded (`%xx` escapes and
+# `+`→space) via `url_decode` in `insert_query_pair`.
 def parse_query_into(query: &String, params: &var Map[String, String])
   let pairs = query.split(&"&")
   let n: Int = pairs.len() as Int
