@@ -244,6 +244,35 @@ while live keep-alive sessions continue on the same reactor.
 
 ---
 
+### F11. FFI class `.new` returning `Result` was shadowed by the constructor-returns-Self rule
+
+**Symptom:** `match Regex.new(pat, &flags); Ok(rx) -> rx.is_match(text); …`
+failed at codegen with `no runtime symbol for ?T::is_match (mangled
+?T<n>_is_match)`. `Regex.new` is an FFI static method declared
+`-> Result[Regex, RegexError]`, but the inferencer typed the call as
+`Regex`. So the `match` scrutinee was `Regex` (not `Result`), the
+`Ok(rx)` binding never resolved to a concrete type, and the method
+call on `rx` mangled with an unresolved `?T` receiver. This was the
+concrete blocker for per-param regex route constraints
+(`segment_satisfies` in `helpers.rx`) and a specific instance of the
+W5/W6 family.
+
+**Root cause:** `typeck::method_resolvers::builtin_method_type` had a
+catch-all `(Ty::Class { .. }, "new") => Some(ty.clone())` that assumed
+**every** `class.new` yields `Self`, overriding the class's own
+declared `new` signature.
+
+**Fix:** that arm now consults `lookup_class_method_return(name,
+"new")` first and honours a declared `new`'s return type; classes
+built via a plain `def init` (no `new` method symbol) still yield
+Self. Concurrency types (Mutex / Arc / SharedSync) match their own
+`new` arms earlier, so their Send-bound (E1101/E1102) checks are
+untouched. Regression spec: `tests/release-e2e/cases/907_regex_match_dispatch.rx`
+in the Ruxen tree. Verified: all `ruxen_core` tests green (517+),
+rondo `constraints_test` green.
+
+---
+
 ## Workarounds in current Rondo (need real upstream fixes)
 
 ### W1. Multi-statement match arm bodies need a statement keyword first

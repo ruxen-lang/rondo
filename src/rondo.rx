@@ -8,7 +8,7 @@ class Rondo
   # Before-hooks run in registration order before route dispatch.
   # A hook returning `Some(response)` short-circuits the cycle —
   # the rest of the chain (and the route handler) are skipped.
-  # Returning `None` lets the request flow through.
+  # Returning `nil` lets the request flow through.
   before_hooks: Array[any Fn(&Request) -> Option[Response]]
   # After-hooks run after the route handler returns, in
   # registration order. Each takes the request and the current
@@ -63,7 +63,7 @@ class Rondo
   ## Register a hook to run before each request. The hook receives
   ## the (matched, params-populated) request and returns either
   ## `Some(response)` to short-circuit (auth failures, redirects,
-  ## logging-as-Bad-Request) or `None` to let the request flow
+  ## logging-as-Bad-Request) or `nil` to let the request flow
   ## through to the route handler.
   def var before(hook: any Fn(&Request) -> Option[Response])
     self.before_hooks.push(hook)
@@ -176,7 +176,7 @@ class Rondo
     end
   end
 
-  def release_connection -> ()
+  def release_connection -> nil
     if self.max_connection_count > 0
       self.active_connections.fetch_sub(1)
     end
@@ -223,6 +223,23 @@ class Rondo
     self.routes.push(Route.new(&"PATCH", path, handler))
   end
 
+  ## Register an explicit HEAD handler. Without one, HEAD requests
+  ## fall back to the matching GET route (Sinatra/Rack convention);
+  ## registering a HEAD route here takes precedence over that
+  ## fallback. The body is still stripped at the wire layer so
+  ## Content-Length reflects the GET-shape byte count.
+  def var head(path: &String, handler: any Fn(&Request) -> Response)
+    self.routes.push(Route.new(&"HEAD", path, handler))
+  end
+
+  ## Register an explicit OPTIONS handler. When CORS is enabled an
+  ## explicit OPTIONS route takes precedence over the built-in CORS
+  ## preflight short-circuit (see `dispatch`); otherwise OPTIONS is
+  ## only answered by this handler.
+  def var options(path: &String, handler: any Fn(&Request) -> Response)
+    self.routes.push(Route.new(&"OPTIONS", path, handler))
+  end
+
   ## Walk the route table; invoke the first matching handler.
   ## Returns a 404 if no route matches. Pure — no I/O, no sockets.
   ## This is the integration-test seam.
@@ -250,9 +267,9 @@ class Rondo
               let _captured = params
               matched_idx = i
               matched_params = _captured
-            None -> 0
+            nil -> 0
           end
-        None -> 0
+        nil -> 0
       end
       i = i + 1
     end
@@ -265,8 +282,9 @@ class Rondo
 
     # Built-in CORS preflight handling runs before user hooks so
     # browsers can negotiate access without requiring a matching
-    # application route.
-    if self.cors_enabled && r.method == "OPTIONS"
+    # application route. An explicit `app.options(...)` route
+    # (matched_idx >= 0) takes precedence over the auto-preflight.
+    if self.cors_enabled && r.method == "OPTIONS" && matched_idx < 0
       var preflight = Response.text(&"")
       preflight = preflight.with_status(204)
       return self.cors_response(preflight)
@@ -281,9 +299,9 @@ class Rondo
         Some(hook) ->
           match hook.(&r)
             Some(resp) -> return self.cors_response(resp)
-            None -> 0
+            nil -> 0
           end
-        None -> 0
+        nil -> 0
       end
       hi = hi + 1
     end
@@ -340,7 +358,7 @@ class Rondo
         if code == resp.status
           match self.error_handlers.get(eci)
             Some(h) -> resp = h.(&r, resp)
-            None    -> 0
+            nil    -> 0
           end
         end
       end
@@ -370,17 +388,17 @@ class Rondo
   ##   app.listen(&"127.0.0.1:8421", 4)     # full address + workers
   ##
   ## Worker count is configured separately with `app.workers(n)`.
-  def listen() -> Result[(), String]
+  def listen() -> Result[nil, String]
     let addr = self.bind_addr
     spawn_async_workers(self, &addr, self.worker_count)
   end
 
-  def listen(port: Int) -> Result[(), String]
+  def listen(port: Int) -> Result[nil, String]
     let addr = bind_addr_from(&self.bind_host, port)
     spawn_async_workers(self, &addr, self.worker_count)
   end
 
-  def listen(addr_or_host: &String) -> Result[(), String]
+  def listen(addr_or_host: &String) -> Result[nil, String]
     let addr = if addr_or_host.contains(&":")
       addr_or_host.clone
     else
@@ -389,7 +407,7 @@ class Rondo
     spawn_async_workers(self, &addr, self.worker_count)
   end
 
-  def listen(addr_or_host: &String, workers: Int) -> Result[(), String]
+  def listen(addr_or_host: &String, workers: Int) -> Result[nil, String]
     let addr = if addr_or_host.contains(&":")
       addr_or_host.clone
     else
@@ -399,7 +417,7 @@ class Rondo
   end
 
   ## Backward-compatible alias for `listen()`.
-  def run -> Result[(), String]
+  def run -> Result[nil, String]
     self.listen()
   end
 end

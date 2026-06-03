@@ -24,17 +24,17 @@ Tester.describe("helpers") do |t: &var Tester|
     parse_query_into(&q, &var m)
     let a = match m.get(&"a")
       Some(v) -> v
-      None    -> String.from(&"<none>")
+      nil    -> String.from(&"<none>")
     end
     t.expect(a).to_eq(String.from(&"1"))
     let b = match m.get(&"b")
       Some(v) -> v
-      None    -> String.from(&"<none>")
+      nil    -> String.from(&"<none>")
     end
     t.expect(b).to_eq(String.from(&"hello world"))
     let flag = match m.get(&"flag")
       Some(v) -> v
-      None    -> String.from(&"<missing>")
+      nil    -> String.from(&"<missing>")
     end
     t.expect(flag).to_eq(String.from(&""))
   end
@@ -45,12 +45,12 @@ Tester.describe("helpers") do |t: &var Tester|
     parse_cookies_into(&raw, &var c)
     let user = match c.get(&"user")
       Some(v) -> v
-      None    -> String.from(&"<none>")
+      nil    -> String.from(&"<none>")
     end
     t.expect(user).to_eq(String.from(&"ada"))
     let sid = match c.get(&"sid")
       Some(v) -> v
-      None    -> String.from(&"<none>")
+      nil    -> String.from(&"<none>")
     end
     t.expect(sid).to_eq(String.from(&"xyz"))
   end
@@ -61,7 +61,7 @@ Tester.describe("helpers") do |t: &var Tester|
     let _o = BoolMatcher.new(ok).to_be_truthy
     let v = match h.get(&"content-type")
       Some(x) -> x
-      None    -> String.from(&"<none>")
+      nil    -> String.from(&"<none>")
     end
     t.expect(v).to_eq(String.from(&"text/plain"))
   end

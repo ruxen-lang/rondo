@@ -133,7 +133,7 @@ class Response
   ## responsible for forming a valid RFC 6265 attribute list. Common
   ## attributes: `Max-Age=<secs>`, `Expires=<rfc1123-date>`,
   ## `Path=<url-prefix>`, `Domain=<host>`, `Secure`, `HttpOnly`,
-  ## `SameSite=Strict|Lax|None`.
+  ## `SameSite=Strict|Lax|nil`.
   def var with_cookie_attrs(name: &String, value: &String, attrs: &String) -> Response
     let key = "set-cookie:" + name.clone
     let combined = value.clone + "; " + attrs.clone
@@ -196,11 +196,11 @@ class Response
     while i < kn
       let name = match ks.get(i)
         Some(k) -> k.clone
-        None    -> ""
+        nil    -> ""
       end
       let value = match self.headers.get(&name)
         Some(v) -> v.clone
-        None    -> ""
+        nil    -> ""
       end
       # `with_cookie(name, value)` stores under the key
       # `set-cookie:<name>` so multiple cookies don't overwrite

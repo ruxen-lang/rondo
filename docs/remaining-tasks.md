@@ -52,14 +52,16 @@ Ruxen runtime/reactor work.
 - [ ] Multipart `multipart/form-data` parsing + file uploads —
       `req.form` handles **only** `application/x-www-form-urlencoded`
       today.
-- [ ] Regex / constraint / wildcard route patterns — routing is literal
-      segments + `:name` only. Now feasible: Ruxen ships `std.regex`
-      (PCRE2: `Regex.new`, `is_match`, `find`, `captures`). Smallest
-      useful increment: per-param constraints (e.g. `:id` ⇒ `\d+`),
-      keeping the fast literal path for plain routes.
-- [ ] Explicit `head` / `options` route registration — HEAD is served
-      via GET fallback and OPTIONS only via the CORS preflight; there is
-      no user-facing `app.head(...)` / `app.options(...)`.
+- [x] Per-param regex constraints — `:name(regex)` segments (e.g.
+      `:id(\d+)`) match only when the path segment satisfies the
+      anchored regex; plain `:name` keeps the fast literal-capture path.
+      Backed by `std.regex` (`segment_satisfies` in `helpers.rx`,
+      parsed in `Route.new`, enforced in `Route.matches`). Wildcard /
+      full-pattern routes remain open.
+- [x] Explicit `head` / `options` route registration — `app.head(...)`
+      / `app.options(...)` register HEAD/OPTIONS routes directly. An
+      explicit HEAD route wins over the GET fallback; an explicit
+      OPTIONS route wins over the CORS auto-preflight.
 - [ ] Response streaming / chunked transfer-encoding — responses are
       fully buffered (`to_http` builds one String).
 - [ ] Request size limits + `413`/`431` — the async reader caps the head

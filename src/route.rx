@@ -14,6 +14,11 @@ class Route
   pattern: String
   pat_segs: Array[String]
   param_names: Array[String]
+  # Parallel to `param_names`: the inline regex constraint for each
+  # capture segment (`:id(\d+)` ⇒ "\d+"), empty when the segment is a
+  # plain `:name` capture or a literal. Checked in `matches` only when
+  # non-empty, so unconstrained routes keep the fast literal path.
+  param_constraints: Array[String]
   has_captures: Bool
   handler: any Fn(&Request) -> Response
 
@@ -23,6 +28,7 @@ class Route
     self.handler = handler
     self.pat_segs = pattern.split(&"/")
     var names: Array[String] = Array.new
+    var constraints: Array[String] = Array.new
     var seen_capture: Bool = false
     let n: Int = self.pat_segs.len() as Int
     var i: Int = 0
@@ -30,14 +36,17 @@ class Route
       let seg = segment_at(&self.pat_segs, i)
       if seg.starts_with(&":")
         let _x = 0
-        names.push(seg.replace(&":", &""))
+        names.push(capture_name_of(&seg))
+        constraints.push(capture_constraint_of(&seg))
         seen_capture = true
       else
         names.push("")
+        constraints.push("")
       end
       i = i + 1
     end
     self.param_names = names
+    self.param_constraints = constraints
     self.has_captures = seen_capture
   end
 
@@ -47,23 +56,23 @@ class Route
   ## segment is a capture and the path segment becomes the captured
   ## value; otherwise the pair must compare equal. Returns
   ## `Some(captures)` on a hit (the map is empty when the pattern
-  ## has no `:`-segments), `None` on a miss.
+  ## has no `:`-segments), `nil` on a miss.
   ##
   ## Examples (after `Route.new("GET", "/users/:id/posts/:post_id", _)`):
   ##   GET /users/42/posts/7  →  Some({id: "42", post_id: "7"})
-  ##   GET /users/42          →  None  (segment count mismatch)
-  ##   POST /users/42/posts/7 →  None  (method mismatch)
-  ##   GET /admin/42          →  None  (literal segment mismatch)
+  ##   GET /users/42          →  nil  (segment count mismatch)
+  ##   POST /users/42/posts/7 →  nil  (method mismatch)
+  ##   GET /admin/42          →  nil  (literal segment mismatch)
   def matches(req: &Request) -> Option[Map[String, String]]
     if self.method != req.method
-      return None
+      return nil
     end
 
     let path_segs = req.path.split(&"/")
     let pn: Int = self.pat_segs.len() as Int
     let xn: Int = path_segs.len() as Int
     if pn != xn
-      return None
+      return nil
     end
 
     var captures: Map[String, String] = Map.new
@@ -74,7 +83,12 @@ class Route
         let name = segment_at(&self.param_names, i)
         let xseg_str = segment_at(&path_segs, i)
         if name.len() > 0
-          captures.insert(name, xseg_str.clone)
+          let constraint = segment_at(&self.param_constraints, i)
+          if constraint.len() > 0 && !segment_satisfies(&constraint, &xseg_str)
+            ok = false
+          else
+            captures.insert(name, xseg_str.clone)
+          end
         else
           let pseg_str = segment_at(&self.pat_segs, i)
           if pseg_str != xseg_str
@@ -87,7 +101,7 @@ class Route
     if ok
       Some(captures)
     else
-      None
+      nil
     end
   end
 end

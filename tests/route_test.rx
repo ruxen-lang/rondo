@@ -5,7 +5,7 @@ Tester.describe("Route.matches") do |t: &var Tester|
     let req = Request.build(&"GET", &"/", &"")
     let matched = match route.matches(&req)
       Some(_) -> true
-      None    -> false
+      nil    -> false
     end
     let _ = BoolMatcher.new(matched).to_be_truthy
   end
@@ -15,7 +15,7 @@ Tester.describe("Route.matches") do |t: &var Tester|
     let req = Request.build(&"POST", &"/", &"")
     let matched = match route.matches(&req)
       Some(_) -> true
-      None    -> false
+      nil    -> false
     end
     let _ = BoolMatcher.new(matched).to_be_falsy
   end
@@ -27,9 +27,9 @@ Tester.describe("Route.matches") do |t: &var Tester|
       Some(params) ->
         match params.get(&"name")
           Some(v) -> v
-          None    -> String.from(&"<none>")
+          nil    -> String.from(&"<none>")
         end
-      None -> String.from(&"<nomatch>")
+      nil -> String.from(&"<nomatch>")
     end
     t.expect(name).to_eq(String.from(&"ada"))
   end
@@ -41,9 +41,9 @@ Tester.describe("Route.matches") do |t: &var Tester|
       Some(params) ->
         match params.get(&"post_id")
           Some(v) -> v
-          None    -> String.from(&"<none>")
+          nil    -> String.from(&"<none>")
         end
-      None -> String.from(&"<nomatch>")
+      nil -> String.from(&"<nomatch>")
     end
     t.expect(post_id).to_eq(String.from(&"7"))
   end

@@ -9,7 +9,7 @@
 ## keep-alive connection no longer blocks that worker from accepting
 ## and serving other sockets.
 
-def async_serve_loop(app: &Rondo, listener: AsyncTcpListener, addr: &String) -> Result[(), String]
+def async_serve_loop(app: &Rondo, listener: AsyncTcpListener, addr: &String) -> Result[nil, String]
   puts "rondo: listening on #{addr} (async)"
   let _served = async_accept_and_spawn(app, listener)
   Ok(nil)
@@ -49,7 +49,7 @@ def async_cycle_wire(app: &Rondo, raw_result: Result[String, IoError]) -> (Strin
             let keep = should_keep_alive(&req)
             close_after = !keep
             resp = app.dispatch(req)
-          None -> 0
+          nil -> 0
         end
         var final_resp = resp
         if close_after
@@ -226,7 +226,7 @@ def async_serve_one_cycle(app: &Rondo, s: &var AsyncTcpStream, raw: &String) -> 
       let keep = should_keep_alive(&req)
       close_after = !keep
       resp = app.dispatch(req)
-    None -> 0
+    nil -> 0
   end
   var final_resp = resp
   if close_after
@@ -249,7 +249,7 @@ end
 # to the same port via SO_REUSEPORT.
 # ─────────────────────────────────────────────────────────────────
 
-def spawn_async_workers(app: &Rondo, addr: &String, workers: Int) -> Result[(), String]
+def spawn_async_workers(app: &Rondo, addr: &String, workers: Int) -> Result[nil, String]
   puts "rondo: starting #{workers} async workers on #{addr}"
   # Spawn (workers - 1) auxiliary OS threads, then run the last
   # worker loop on the MAIN thread. That gives us `workers` reactors

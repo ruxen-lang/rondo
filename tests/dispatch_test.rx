@@ -26,14 +26,14 @@ Tester.describe("Rondo.dispatch") do |t: &var Tester|
 
   t.it("before-hook short-circuits /admin with 401") do
     var app = Rondo.new
-    app.before({ |req: &Request| if req.path.starts_with(&"/admin") Some(Response.text(&"no").with_status(401)) else None end })
+    app.before({ |req: &Request| if req.path.starts_with(&"/admin") Some(Response.text(&"no").with_status(401)) else nil end })
     app.get(&"/admin", { |req: &Request| Response.text(&"secret") })
     t.expect(app.dispatch(Request.build(&"GET", &"/admin", &"")).status).to_eq(401)
   end
 
   t.it("before-hook passes /public through (200)") do
     var app = Rondo.new
-    app.before({ |req: &Request| if req.path.starts_with(&"/admin") Some(Response.text(&"no").with_status(401)) else None end })
+    app.before({ |req: &Request| if req.path.starts_with(&"/admin") Some(Response.text(&"no").with_status(401)) else nil end })
     app.get(&"/public", { |req: &Request| Response.text(&"open") })
     t.expect(app.dispatch(Request.build(&"GET", &"/public", &"")).status).to_eq(200)
   end
@@ -66,7 +66,7 @@ Tester.describe("Rondo.dispatch") do |t: &var Tester|
     let res = app.dispatch(Request.build(&"GET", &"/", &""))
     let v = match res.headers.get(&"x-after")
       Some(x) -> x
-      None    -> String.from(&"<none>")
+      nil    -> String.from(&"<none>")
     end
     t.expect(v).to_eq(String.from(&"ran"))
   end

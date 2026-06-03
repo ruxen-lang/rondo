@@ -9,7 +9,7 @@
 def segment_at(segs: &Array[String], i: Int) -> String
   match segs.get(i)
     Some(s) -> s.clone
-    None    -> ""
+    nil    -> ""
   end
 end
 
@@ -32,16 +32,16 @@ def url_decode(s: &String) -> String
   while i < n
     let b = match bytes.get(i)
       Some(v) -> v
-      None    -> 0
+      nil    -> 0
     end
     if b == 37 && i + 2 < n
       let h1 = match bytes.get(i + 1)
         Some(v) -> v
-        None    -> 0
+        nil    -> 0
       end
       let h2 = match bytes.get(i + 2)
         Some(v) -> v
-        None    -> 0
+        nil    -> 0
       end
       let decoded = hex_pair_to_byte(h1, h2)
       if decoded >= 0
@@ -119,7 +119,7 @@ def merge_params_into(src: &Map[String, String], dst: &var Map[String, String])
   while i < n
     match ks.get(i)
       Some(k) -> copy_one_param(&k, src, dst)
-      None    -> 0
+      nil    -> 0
     end
     i = i + 1
   end
@@ -128,7 +128,7 @@ end
 def copy_one_param(name: &String, src: &Map[String, String], dst: &var Map[String, String])
   match src.get(name)
     Some(v) -> dst.insert(name.clone, v.clone)
-    None    -> 0
+    nil    -> 0
   end
 end
 
@@ -222,7 +222,7 @@ def parse_header_into(line: &String, headers: &var Map[String, String]) -> Bool
       let raw_value = segment_at(&pair, 1)
       headers.insert(raw_name.to_lower, raw_value.trim)
       true
-    None -> false
+    nil -> false
   end
 end
 
@@ -299,6 +299,51 @@ def head_only_wire(full: &String) -> String
   segment_at(&parts, 0) + "\r\n\r\n"
 end
 
+# Capture-segment parsing for route patterns. A capture segment is
+# `:name` optionally followed by an inline regex constraint in
+# parentheses: `:id(\d+)`. `capture_name_of` returns the bare name
+# (no `:`, no constraint), `capture_constraint_of` returns the regex
+# text between the first `(` and the trailing `)`. Both return "" for
+# a non-capture segment / a segment with no constraint.
+def capture_name_of(seg: &String) -> String
+  if !seg.starts_with(&":")
+    return ""
+  end
+  let head = seg.splitn(2, &"(")
+  let name_part = segment_at(&head, 0)
+  name_part.replace(&":", &"")
+end
+
+def capture_constraint_of(seg: &String) -> String
+  if !seg.starts_with(&":")
+    return ""
+  end
+  match seg.find(&"(")
+    Some(_) ->
+      let head = seg.splitn(2, &"(")
+      var rest = segment_at(&head, 1)
+      if rest.ends_with(&")")
+        rest.truncate((rest.len() as Int) - 1)
+      end
+      rest
+    nil -> ""
+  end
+end
+
+# Does `seg` satisfy the inline `constraint` regex? The constraint is
+# anchored to the whole segment (`^…$`) so `:id(\d+)` matches "42" but
+# not "42x". A constraint that fails to compile matches nothing —
+# surfacing the broken pattern as a 404 rather than silently ignoring
+# the constraint.
+def segment_satisfies(constraint: &String, seg: &String) -> Bool
+  let anchored = "^" + constraint.clone + "$"
+  let flags = String.from(&"")
+  match Regex.new(&anchored, &flags)
+    Ok(rx) -> rx.is_match(seg)
+    Err(_) -> false
+  end
+end
+
 # Map an HTTP status code to its canonical reason phrase. Covers
 # the handful Rondo uses by default; unknown codes fall through to
 # "OK" so the wire format stays well-formed.
@@ -318,3 +363,4 @@ def reason_phrase(status: Int) -> String
     _   -> "OK"
   end
 end
+

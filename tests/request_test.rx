@@ -16,10 +16,10 @@ Tester.describe("Request") do |t: &var Tester|
         t.expect(req.body.clone).to_eq(String.from(&"hello"))
         let ct = match req.header(&"content-type")
           Some(v) -> v
-          None    -> String.from(&"<none>")
+          nil    -> String.from(&"<none>")
         end
         t.expect(ct).to_eq(String.from(&"text/plain"))
-      None ->
+      nil ->
         let _ = BoolMatcher.new(false).to_be_truthy
     end
   end
@@ -30,15 +30,15 @@ Tester.describe("Request") do |t: &var Tester|
         let _ = t.expect(req.path.clone).to_eq(String.from(&"/search"))
         let q = match req.param(&"q")
           Some(v) -> v
-          None    -> String.from(&"<none>")
+          nil    -> String.from(&"<none>")
         end
         t.expect(q).to_eq(String.from(&"hello"))
         let page = match req.param(&"page")
           Some(v) -> v
-          None    -> String.from(&"<none>")
+          nil    -> String.from(&"<none>")
         end
         t.expect(page).to_eq(String.from(&"2"))
-      None ->
+      nil ->
         let _ = BoolMatcher.new(false).to_be_truthy
     end
   end
@@ -46,7 +46,7 @@ Tester.describe("Request") do |t: &var Tester|
   t.it("parse rejects malformed input") do
     let rejected = match Request.parse(&"GARBAGE")
       Some(_) -> false
-      None    -> true
+      nil    -> true
     end
     let _ = BoolMatcher.new(rejected).to_be_truthy
   end
@@ -56,10 +56,10 @@ Tester.describe("Request") do |t: &var Tester|
       Some(req) ->
         let who = match req.cookie(&"user")
           Some(v) -> v
-          None    -> String.from(&"<none>")
+          nil    -> String.from(&"<none>")
         end
         let _ = t.expect(who).to_eq(String.from(&"ada"))
-      None ->
+      nil ->
         let _ = BoolMatcher.new(false).to_be_truthy
     end
   end

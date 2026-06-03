@@ -26,7 +26,7 @@ class Request
     self.cookies = Map.new
   end
 
-  ## Cookie lookup. Returns `None` if the cookie isn't set.
+  ## Cookie lookup. Returns `nil` if the cookie isn't set.
   def cookie(name: &String) -> Option[String]
     self.cookies.get(name)
   end
@@ -44,7 +44,7 @@ class Request
   ## Parse a raw HTTP/1.x request string into a `Request`.
   ##
   ## Accepts `<METHOD> <PATH> <HTTP-VERSION>\r\n<headers>\r\n\r\n<body>`.
-  ## Returns `None` on malformed input (missing request line, fewer
+  ## Returns `nil` on malformed input (missing request line, fewer
   ## than 3 tokens on the request line, header parse failure). The
   ## body is everything after the `\r\n\r\n` separator, taken
   ## verbatim — query string and form parsing are left to handlers.
@@ -59,14 +59,14 @@ class Request
     let lines = head.split(&"\r\n")
     let line_count: Int = lines.len() as Int
     if line_count == 0
-      return None
+      return nil
     end
 
     # Request line: "METHOD PATH VERSION"
     let req_line = segment_at(&lines, 0)
     let parts = req_line.split(&" ")
     if (parts.len() as Int) < 3
-      return None
+      return nil
     end
 
     var r = Request.new
@@ -97,7 +97,7 @@ class Request
     Some(r)
   end
 
-  ## Header lookup. Returns `None` if the header is absent.
+  ## Header lookup. Returns `nil` if the header is absent.
   def header(name: &String) -> Option[String]
     self.headers.get(name)
   end
@@ -118,7 +118,7 @@ class Request
   ##   let fields = req.form
   ##   match fields.get(&"username")
   ##     Some(u) -> Response.text(&"hi #{u}")
-  ##     None    -> Response.text(&"missing username").with_status(400)
+  ##     nil    -> Response.text(&"missing username").with_status(400)
   ##   end
   ## })
   ## ```
@@ -126,7 +126,7 @@ class Request
     var out: Map[String, String] = Map.new
     let ct = match self.headers.get(&"content-type")
       Some(v) -> v
-      None    -> ""
+      nil    -> ""
     end
     if !ct.starts_with(&"application/x-www-form-urlencoded")
       return out

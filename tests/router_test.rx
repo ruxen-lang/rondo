@@ -7,7 +7,7 @@ Tester.describe("router helpers") do |t: &var Tester|
   t.it("should_keep_alive is false when Connection: close") do
     let keep = match Request.parse(&String.from(&"GET / HTTP/1.1\r\nConnection: close\r\n\r\n"))
       Some(req) -> should_keep_alive(&req)
-      None      -> true
+      nil      -> true
     end
     let _k = BoolMatcher.new(keep).to_be_falsy
   end
@@ -15,7 +15,7 @@ Tester.describe("router helpers") do |t: &var Tester|
   t.it("should_keep_alive is true when Connection: keep-alive") do
     let keep = match Request.parse(&String.from(&"GET / HTTP/1.1\r\nConnection: keep-alive\r\n\r\n"))
       Some(req) -> should_keep_alive(&req)
-      None      -> false
+      nil      -> false
     end
     let _k = BoolMatcher.new(keep).to_be_truthy
   end
@@ -23,7 +23,7 @@ Tester.describe("router helpers") do |t: &var Tester|
   t.it("should_keep_alive defaults to true with no Connection header") do
     let keep = match Request.parse(&String.from(&"GET / HTTP/1.1\r\nHost: x\r\n\r\n"))
       Some(req) -> should_keep_alive(&req)
-      None      -> false
+      nil      -> false
     end
     let _k = BoolMatcher.new(keep).to_be_truthy
   end

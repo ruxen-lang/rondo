@@ -16,7 +16,7 @@ def split_path_query_into(p: &String, request: &var Request)
       request.path = segment_at(&parts, 0)
       request.query = take_after_question(&parts)
       parse_query_into(&request.query, &var request.params)
-    None ->
+    nil ->
       request.path = p.clone
   end
 end
@@ -28,7 +28,7 @@ end
 def invoke_route_handler(routes: &Array[Route], idx: Int, req: &Request) -> Response
   match routes.get(idx)
     Some(route) -> route.handler.(req)
-    None        -> Response.internal_error()
+    nil        -> Response.internal_error()
   end
 end
 
@@ -160,6 +160,6 @@ def should_keep_alive(req: &Request) -> Bool
       else
         true
       end
-    None -> true
+    nil -> true
   end
 end

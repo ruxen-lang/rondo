@@ -8,7 +8,7 @@ Tester.describe("CORS middleware") do |t: &var Tester|
     let res = app.dispatch(Request.build(&"GET", &"/api", &""))
     let origin = match res.headers.get(&"access-control-allow-origin")
       Some(v) -> v
-      None    -> String.from(&"<none>")
+      nil    -> String.from(&"<none>")
     end
     t.expect(origin).to_eq(String.from(&"*"))
   end
@@ -28,12 +28,12 @@ Tester.describe("CORS middleware") do |t: &var Tester|
     let res = app.dispatch(Request.build(&"GET", &"/api", &""))
     let origin = match res.headers.get(&"access-control-allow-origin")
       Some(v) -> v
-      None    -> String.from(&"<none>")
+      nil    -> String.from(&"<none>")
     end
     let _ = t.expect(origin).to_eq(String.from(&"https://client.example"))
     let cred = match res.headers.get(&"access-control-allow-credentials")
       Some(v) -> v
-      None    -> String.from(&"<none>")
+      nil    -> String.from(&"<none>")
     end
     t.expect(cred).to_eq(String.from(&"true"))
   end
@@ -45,12 +45,12 @@ Tester.describe("CORS middleware") do |t: &var Tester|
     let res = app.dispatch(Request.build(&"GET", &"/api", &""))
     let has_cred = match res.headers.get(&"access-control-allow-credentials")
       Some(_) -> true
-      None    -> false
+      nil    -> false
     end
     let _c = BoolMatcher.new(has_cred).to_be_falsy
     let has_vary = match res.headers.get(&"vary")
       Some(_) -> true
-      None    -> false
+      nil    -> false
     end
     let _v = BoolMatcher.new(has_vary).to_be_falsy
   end
@@ -64,7 +64,7 @@ Tester.describe("CORS middleware") do |t: &var Tester|
     t.expect(res.status).to_eq(403)
     let origin = match res.headers.get(&"access-control-allow-origin")
       Some(v) -> v
-      None    -> String.from(&"<none>")
+      nil    -> String.from(&"<none>")
     end
     t.expect(origin).to_eq(String.from(&"*"))
   end

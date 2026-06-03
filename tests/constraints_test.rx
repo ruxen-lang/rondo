@@ -1,0 +1,68 @@
+# Per-param regex constraints: `:name(regex)` segments only match when
+# the path segment satisfies the (anchored) regex. Plain `:name`
+# segments keep the fast, unconstrained literal-capture path.
+Tester.describe("Route constraints") do |t: &var Tester|
+  t.it("captures when a constrained segment satisfies the regex") do
+    let route = Route.new(&"GET", &"/users/:id(\\d+)", { |req: &Request| Response.text(&"x") })
+    let req = Request.build(&"GET", &"/users/42", &"")
+    let id = match route.matches(&req)
+      Some(params) ->
+        match params.get(&"id")
+          Some(v) -> v
+          nil    -> String.from(&"<none>")
+        end
+      nil -> String.from(&"<nomatch>")
+    end
+    t.expect(id).to_eq(String.from(&"42"))
+  end
+
+  t.it("does not match when a constrained segment violates the regex") do
+    let route = Route.new(&"GET", &"/users/:id(\\d+)", { |req: &Request| Response.text(&"x") })
+    let req = Request.build(&"GET", &"/users/abc", &"")
+    let matched = match route.matches(&req)
+      Some(_) -> true
+      nil    -> false
+    end
+    let _ = BoolMatcher.new(matched).to_be_falsy
+  end
+
+  t.it("anchors the constraint to the whole segment") do
+    let route = Route.new(&"GET", &"/users/:id(\\d+)", { |req: &Request| Response.text(&"x") })
+    let req = Request.build(&"GET", &"/users/42x", &"")
+    let matched = match route.matches(&req)
+      Some(_) -> true
+      nil    -> false
+    end
+    let _ = BoolMatcher.new(matched).to_be_falsy
+  end
+
+  t.it("supports character-class constraints") do
+    let route = Route.new(&"GET", &"/files/:name([a-z]+)", { |req: &Request| Response.text(&"x") })
+    let lower = match route.matches(&Request.build(&"GET", &"/files/readme", &""))
+      Some(_) -> true
+      nil    -> false
+    end
+    let _ = BoolMatcher.new(lower).to_be_truthy
+    let mixed = match route.matches(&Request.build(&"GET", &"/files/READ1", &""))
+      Some(_) -> true
+      nil    -> false
+    end
+    let _2 = BoolMatcher.new(mixed).to_be_falsy
+  end
+
+  t.it("leaves an unconstrained :param matching anything") do
+    let route = Route.new(&"GET", &"/u/:id", { |req: &Request| Response.text(&"x") })
+    let matched = match route.matches(&Request.build(&"GET", &"/u/anything-123", &""))
+      Some(_) -> true
+      nil    -> false
+    end
+    let _ = BoolMatcher.new(matched).to_be_truthy
+  end
+
+  t.it("a constraint miss falls through to 404 in dispatch") do
+    var app = Rondo.new
+    app.get(&"/users/:id(\\d+)", { |req: &Request| Response.text(&"user") })
+    t.expect(app.dispatch(Request.build(&"GET", &"/users/42", &"")).status).to_eq(200)
+    t.expect(app.dispatch(Request.build(&"GET", &"/users/abc", &"")).status).to_eq(404)
+  end
+end

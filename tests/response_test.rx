@@ -39,7 +39,7 @@ Tester.describe("Response") do |t: &var Tester|
     r.with_header(&"X-Test", &"yes")
     let v = match r.headers.get(&"x-test")
       Some(x) -> x
-      None    -> String.from(&"<none>")
+      nil    -> String.from(&"<none>")
     end
     t.expect(v).to_eq(String.from(&"yes"))
   end
@@ -49,7 +49,7 @@ Tester.describe("Response") do |t: &var Tester|
     t.expect(r.status).to_eq(302)
     let loc = match r.headers.get(&"location")
       Some(x) -> x
-      None    -> String.from(&"<none>")
+      nil    -> String.from(&"<none>")
     end
     t.expect(loc).to_eq(String.from(&"/home"))
   end

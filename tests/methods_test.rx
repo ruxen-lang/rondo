@@ -1,0 +1,57 @@
+# Explicit HEAD / OPTIONS route registration via app.head / app.options.
+# HEAD has always been served via GET fallback and OPTIONS only via the
+# CORS preflight; these tests pin the user-facing registration surface.
+Tester.describe("Rondo.head / Rondo.options") do |t: &var Tester|
+  t.it("dispatches an explicit OPTIONS route to its handler") do
+    var app = Rondo.new
+    app.options(&"/widgets", { |req: &Request| Response.text(&"opts").with_header(&"allow", &"GET, POST") })
+    let res = app.dispatch(Request.build(&"OPTIONS", &"/widgets", &""))
+    t.expect(res.status).to_eq(200)
+    let allow = match res.headers.get(&"allow")
+      Some(v) -> v
+      nil    -> String.from(&"<none>")
+    end
+    t.expect(allow).to_eq(String.from(&"GET, POST"))
+  end
+
+  t.it("dispatches an explicit HEAD route to its handler") do
+    var app = Rondo.new
+    app.head(&"/ping", { |req: &Request| Response.text(&"").with_header(&"x-pong", &"1") })
+    let res = app.dispatch(Request.build(&"HEAD", &"/ping", &""))
+    t.expect(res.status).to_eq(200)
+    let pong = match res.headers.get(&"x-pong")
+      Some(v) -> v
+      nil    -> String.from(&"<none>")
+    end
+    t.expect(pong).to_eq(String.from(&"1"))
+  end
+
+  t.it("an explicit HEAD route is preferred over GET fallback") do
+    var app = Rondo.new
+    app.get(&"/ping", { |req: &Request| Response.text(&"GET body").with_header(&"x-src", &"get") })
+    app.head(&"/ping", { |req: &Request| Response.text(&"").with_header(&"x-src", &"head") })
+    let res = app.dispatch(Request.build(&"HEAD", &"/ping", &""))
+    let src = match res.headers.get(&"x-src")
+      Some(v) -> v
+      nil    -> String.from(&"<none>")
+    end
+    t.expect(src).to_eq(String.from(&"head"))
+  end
+
+  t.it("an explicit OPTIONS route wins over the CORS auto-preflight") do
+    var app = Rondo.new
+    app.cors()
+    app.options(&"/widgets", { |req: &Request| Response.text(&"custom").with_status(200) })
+    let res = app.dispatch(Request.build(&"OPTIONS", &"/widgets", &""))
+    t.expect(res.status).to_eq(200)
+    t.expect(res.body).to_eq(String.from(&"custom"))
+  end
+
+  t.it("CORS auto-preflight still fires for OPTIONS with no explicit route") do
+    var app = Rondo.new
+    app.cors()
+    app.get(&"/widgets", { |req: &Request| Response.text(&"list") })
+    let res = app.dispatch(Request.build(&"OPTIONS", &"/widgets", &""))
+    t.expect(res.status).to_eq(204)
+  end
+end
