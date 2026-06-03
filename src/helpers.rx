@@ -26,7 +26,7 @@ end
 # valid UTF-8 the decoded byte sequence carries.
 def url_decode(s: &String) -> String
   let bytes = s.bytes()
-  let n: Int = bytes.len() as Int
+  let n: Int = bytes.size() as Int
   var out: Array[Int] = Array.new
   var i: Int = 0
   while i < n
@@ -96,7 +96,7 @@ end
 # additional `?` characters (rare, but legal under RFC 3986) is
 # preserved verbatim instead of truncated at the first delimiter.
 def take_after_question(parts: &Array[String]) -> String
-  let n: Int = parts.len() as Int
+  let n: Int = parts.size() as Int
   var out: String = ""
   var i: Int = 1
   while i < n
@@ -114,7 +114,7 @@ end
 # win on key collision because they're inserted last).
 def merge_params_into(src: &Map[String, String], dst: &var Map[String, String])
   let ks = src.keys()
-  let n: Int = ks.len() as Int
+  let n: Int = ks.size() as Int
   var i: Int = 0
   while i < n
     match ks.get(i)
@@ -137,7 +137,7 @@ end
 # `+`→space) via `url_decode` in `insert_query_pair`.
 def parse_query_into(query: &String, params: &var Map[String, String])
   let pairs = query.split(&"&")
-  let n: Int = pairs.len() as Int
+  let n: Int = pairs.size() as Int
   var i: Int = 0
   while i < n
     let pair = segment_at(&pairs, i)
@@ -152,11 +152,11 @@ end
 # `name` and `value` are URL-decoded (`%xx` + `+`→space) on the
 # way in.
 def insert_query_pair(pair: &String, params: &var Map[String, String])
-  if pair.len() > 0
+  if pair.size() > 0
     let kv = pair.split(&"=")
     let name_raw = segment_at(&kv, 0)
-    if name_raw.len() > 0
-      let value_raw = if (kv.len() as Int) > 1
+    if name_raw.size() > 0
+      let value_raw = if (kv.size() as Int) > 1
         segment_at(&kv, 1)
       else
         String.new
@@ -175,12 +175,12 @@ end
 # `Rack::Cookies` lenience.
 def parse_cookies_into(raw: &String, cookies: &var Map[String, String])
   let pairs = raw.split(&";")
-  let n: Int = pairs.len() as Int
+  let n: Int = pairs.size() as Int
   var i: Int = 0
   while i < n
     let pair = segment_at(&pairs, i)
     let trimmed = pair.trim
-    if trimmed.len() > 0
+    if trimmed.size() > 0
       stash_cookie_pair(&trimmed, cookies)
     end
     i = i + 1
@@ -190,8 +190,8 @@ end
 def stash_cookie_pair(pair: &String, cookies: &var Map[String, String])
   let parts = pair.split(&"=")
   let name_raw = segment_at(&parts, 0)
-  if name_raw.len() > 0
-    let value_raw = if (parts.len() as Int) > 1
+  if name_raw.size() > 0
+    let value_raw = if (parts.size() as Int) > 1
       segment_at(&parts, 1)
     else
       String.new
@@ -231,7 +231,7 @@ end
 # happens to contain it). `split` collapses consecutive separators,
 # so we join slots [1..] back together with "\r\n\r\n" between.
 def rebuild_body(slots: &Array[String]) -> String
-  let n: Int = slots.len() as Int
+  let n: Int = slots.size() as Int
   if n <= 1
     ""
   else
@@ -254,7 +254,7 @@ end
 # multi-read accumulator to decide when a request body is complete.
 def parse_content_length(head: &String) -> Int
   let lines = head.split(&"\r\n")
-  let n: Int = lines.len() as Int
+  let n: Int = lines.size() as Int
   var i: Int = 0
   var result: Int = 0
   while i < n
@@ -283,7 +283,7 @@ def extract_method(raw: &String) -> String
   let lines = raw.split(&"\r\n")
   let first = segment_at(&lines, 0)
   let parts = first.split(&" ")
-  if (parts.len() as Int) >= 1
+  if (parts.size() as Int) >= 1
     segment_at(&parts, 0)
   else
     String.from(&"GET")
@@ -323,7 +323,7 @@ def capture_constraint_of(seg: &String) -> String
       let head = seg.splitn(2, &"(")
       var rest = segment_at(&head, 1)
       if rest.ends_with(&")")
-        rest.truncate((rest.len() as Int) - 1)
+        rest.truncate((rest.size() as Int) - 1)
       end
       rest
     nil -> ""

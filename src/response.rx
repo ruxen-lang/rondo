@@ -179,7 +179,7 @@ class Response
     # then appends in-place. The previous `out = out + …` shape
     # allocated a fresh buffer on every concat — quadratic in the
     # number of headers.
-    let body_len: Int = self.body.len() as Int
+    let body_len: Int = self.body.size() as Int
     var out: String = String.with_capacity(256 + body_len)
     out.push_str(&"HTTP/1.1 ")
     out.push_str(&"#{self.status}")
@@ -191,7 +191,7 @@ class Response
     out.push_str(&"\r\n")
 
     let ks = self.headers.keys()
-    let kn: Int = ks.len() as Int
+    let kn: Int = ks.size() as Int
     var i: Int = 0
     while i < kn
       let name = match ks.get(i)

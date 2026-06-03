@@ -42,7 +42,7 @@ end
 # fuzzy too — HEAD is for cache validation, not body-bearing
 # operations, so missing captures rarely matter.
 def find_get_route_for(routes: &Array[Route], path: &String) -> Int
-  let n: Int = routes.len() as Int
+  let n: Int = routes.size() as Int
   var i: Int = 0
   while i < n
     let route_opt = routes.get(i)
@@ -70,12 +70,12 @@ end
 # (see `mime_type_for`) — defaults to application/octet-stream
 # for unknown extensions, same as Rack::Mime.
 def try_static_or_404(public_folder: &String, path: &String) -> Response
-  if public_folder.len() == 0
+  if public_folder.size() == 0
     return Response.not_found()
   end
   # Build the on-disk path. Reject `..` segments to avoid path
   # traversal — Sinatra's `send_file` does the same.
-  if path.contains(&"..")
+  if path.include?(&"..")
     return Response.not_found()
   end
   let full = public_folder.clone + path.clone
@@ -108,7 +108,7 @@ end
 def mime_type_for(path: &String) -> String
   let lower = path.to_lower
   let parts = lower.split(&".")
-  let n = parts.len() as Int
+  let n = parts.size() as Int
   let ext = if n > 1
     segment_at(&parts, n - 1)
   else
@@ -155,7 +155,7 @@ def should_keep_alive(req: &Request) -> Bool
   match req.header(&"connection")
     Some(v) ->
       let lower: String = v.to_lower
-      if lower.contains(&"close")
+      if lower.include?(&"close")
         false
       else
         true

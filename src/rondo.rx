@@ -255,7 +255,7 @@ class Rondo
     # 1. Find the route. We need to dispatch even on miss so the
     # before-hooks see the request first; on miss, the response
     # is `Response.not_found()`.
-    let n: Int = self.routes.len() as Int
+    let n: Int = self.routes.size() as Int
     var i: Int = 0
     var matched_idx: Int = -1
     var matched_params: Map[String, String] = Map.new
@@ -292,7 +292,7 @@ class Rondo
 
     # 3. Walk before-hooks. The first one to return Some(resp)
     # short-circuits the request — handler is skipped.
-    let hn: Int = self.before_hooks.len() as Int
+    let hn: Int = self.before_hooks.size() as Int
     var hi: Int = 0
     while hi < hn
       match self.before_hooks.get(hi)
@@ -334,7 +334,7 @@ class Rondo
     # 6. After-hooks: each gets to rewrite the response. Calling
     # `hook.(&r, resp)` moves `resp` into the closure and binds the
     # closure's return value back to `resp` for the next iteration.
-    let ahn: Int = self.after_hooks.len() as Int
+    let ahn: Int = self.after_hooks.size() as Int
     var ahi: Int = 0
     while ahi < ahn
       let hook_opt = self.after_hooks.get(ahi)
@@ -349,7 +349,7 @@ class Rondo
     # for the current status, run it. Last-wins: any later
     # registration on the same status overwrites — same as
     # Sinatra.
-    let ecn: Int = self.error_codes.len() as Int
+    let ecn: Int = self.error_codes.size() as Int
     var eci: Int = 0
     while eci < ecn
       let code_opt = self.error_codes.get(eci)
@@ -399,7 +399,7 @@ class Rondo
   end
 
   def listen(addr_or_host: &String) -> Result[nil, String]
-    let addr = if addr_or_host.contains(&":")
+    let addr = if addr_or_host.include?(&":")
       addr_or_host.clone
     else
       bind_addr_from(addr_or_host, self.bind_port)
@@ -408,7 +408,7 @@ class Rondo
   end
 
   def listen(addr_or_host: &String, workers: Int) -> Result[nil, String]
-    let addr = if addr_or_host.contains(&":")
+    let addr = if addr_or_host.include?(&":")
       addr_or_host.clone
     else
       bind_addr_from(addr_or_host, self.bind_port)

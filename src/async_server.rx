@@ -37,7 +37,7 @@ def async_cycle_wire(app: &Rondo, raw_result: Result[String, IoError]) -> (Strin
   match raw_result
     Ok(raw) ->
       let _x = 0
-      if raw.len() == 0
+      if raw.size() == 0
         (String.from(&""), false)
       else
         let method = extract_method(&raw)
@@ -122,7 +122,7 @@ class RondoConnectionTask
             let cycle = async_cycle_wire(self.app, raw_result)
             self.wire = cycle.0
             self.keep_going = cycle.1
-            if self.wire.len() == 0
+            if self.wire.size() == 0
               if !self.keep_going
                 self.release()
                 return Poll.Ready(0)
@@ -176,28 +176,28 @@ def read_full_request(s: &var AsyncTcpStream) -> String
     match chunk_result
       Ok(chunk) ->
         let _x = 0
-        if chunk.len() == 0
+        if chunk.size() == 0
           return ""
         end
         buf = buf + chunk
         if head_bytes < 0
-          if buf.contains(&"\r\n\r\n")
+          if buf.include?(&"\r\n\r\n")
             let parts = buf.split(&"\r\n\r\n")
             let head = segment_at(&parts, 0)
-            head_bytes = (head.len() as Int) + 4
+            head_bytes = (head.size() as Int) + 4
             need_body = parse_content_length(&head)
           else
-            if (buf.len() as Int) > head_cap
+            if (buf.size() as Int) > head_cap
               return ""
             end
           end
         end
         if head_bytes >= 0
-          let have_body = (buf.len() as Int) - head_bytes
+          let have_body = (buf.size() as Int) - head_bytes
           if have_body >= need_body
             return buf
           end
-          if (buf.len() as Int) > total_cap
+          if (buf.size() as Int) > total_cap
             return ""
           end
         end

@@ -30,7 +30,7 @@ class Route
     var names: Array[String] = Array.new
     var constraints: Array[String] = Array.new
     var seen_capture: Bool = false
-    let n: Int = self.pat_segs.len() as Int
+    let n: Int = self.pat_segs.size() as Int
     var i: Int = 0
     while i < n
       let seg = segment_at(&self.pat_segs, i)
@@ -69,8 +69,8 @@ class Route
     end
 
     let path_segs = req.path.split(&"/")
-    let pn: Int = self.pat_segs.len() as Int
-    let xn: Int = path_segs.len() as Int
+    let pn: Int = self.pat_segs.size() as Int
+    let xn: Int = path_segs.size() as Int
     if pn != xn
       return nil
     end
@@ -82,9 +82,9 @@ class Route
       if ok
         let name = segment_at(&self.param_names, i)
         let xseg_str = segment_at(&path_segs, i)
-        if name.len() > 0
+        if name.size() > 0
           let constraint = segment_at(&self.param_constraints, i)
-          if constraint.len() > 0 && !segment_satisfies(&constraint, &xseg_str)
+          if constraint.size() > 0 && !segment_satisfies(&constraint, &xseg_str)
             ok = false
           else
             captures.insert(name, xseg_str.clone)
