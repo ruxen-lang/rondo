@@ -2,20 +2,20 @@
 Tester.describe("server config") do |t: &var Tester|
   t.it("defaults to 127.0.0.1:3000") do
     var app = Rondo.new
-    t.expect(app.bind_addr.clone).to_eq(String.from(&"127.0.0.1:3000"))
+    t.expect(app.bind_addr.clone).to_eq("127.0.0.1:3000")
   end
 
   t.it("port() changes only the port") do
     var app = Rondo.new
     app.port(9292)
-    t.expect(app.bind_addr.clone).to_eq(String.from(&"127.0.0.1:9292"))
+    t.expect(app.bind_addr.clone).to_eq("127.0.0.1:9292")
   end
 
   t.it("host() + port() compose into the bind address") do
     var app = Rondo.new
     app.port(9292)
     app.host(&"0.0.0.0")
-    t.expect(app.bind_addr.clone).to_eq(String.from(&"0.0.0.0:9292"))
+    t.expect(app.bind_addr.clone).to_eq("0.0.0.0:9292")
   end
 
   t.it("workers() sets the worker count") do

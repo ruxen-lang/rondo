@@ -27,11 +27,11 @@ Tester.describe("Route.matches") do |t: &var Tester|
       Some(params) ->
         match params.get(&"name")
           Some(v) -> v
-          nil    -> String.from(&"<none>")
+          nil    -> "<none>"
         end
-      nil -> String.from(&"<nomatch>")
+      nil -> "<nomatch>"
     end
-    t.expect(name).to_eq(String.from(&"ada"))
+    t.expect(name).to_eq("ada")
   end
 
   t.it("captures multiple path params") do
@@ -41,10 +41,10 @@ Tester.describe("Route.matches") do |t: &var Tester|
       Some(params) ->
         match params.get(&"post_id")
           Some(v) -> v
-          nil    -> String.from(&"<none>")
+          nil    -> "<none>"
         end
-      nil -> String.from(&"<nomatch>")
+      nil -> "<nomatch>"
     end
-    t.expect(post_id).to_eq(String.from(&"7"))
+    t.expect(post_id).to_eq("7")
   end
 end

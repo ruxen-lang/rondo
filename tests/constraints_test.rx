@@ -9,11 +9,11 @@ Tester.describe("Route constraints") do |t: &var Tester|
       Some(params) ->
         match params.get(&"id")
           Some(v) -> v
-          nil    -> String.from(&"<none>")
+          nil    -> "<none>"
         end
-      nil -> String.from(&"<nomatch>")
+      nil -> "<nomatch>"
     end
-    t.expect(id).to_eq(String.from(&"42"))
+    t.expect(id).to_eq("42")
   end
 
   t.it("does not match when a constrained segment violates the regex") do

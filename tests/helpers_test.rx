@@ -4,106 +4,106 @@
 Tester.describe("helpers") do |t: &var Tester|
   t.it("segment_at returns the element in range and empty out of range") do
     var arr: Array[String] = Array.new
-    arr.push(String.from(&"a"))
-    arr.push(String.from(&"b"))
-    t.expect(segment_at(&arr, 0)).to_eq(String.from(&"a"))
-    t.expect(segment_at(&arr, 1)).to_eq(String.from(&"b"))
-    t.expect(segment_at(&arr, 9)).to_eq(String.from(&""))
+    arr.push("a")
+    arr.push("b")
+    t.expect(segment_at(&arr, 0)).to_eq("a")
+    t.expect(segment_at(&arr, 1)).to_eq("b")
+    t.expect(segment_at(&arr, 9)).to_eq("")
   end
 
   t.it("url_decode handles %xx, +, plain text, and malformed escapes") do
-    t.expect(url_decode(&String.from(&"foo%20bar"))).to_eq(String.from(&"foo bar"))
-    t.expect(url_decode(&String.from(&"a+b"))).to_eq(String.from(&"a b"))
-    t.expect(url_decode(&String.from(&"plain"))).to_eq(String.from(&"plain"))
-    t.expect(url_decode(&String.from(&"%zz"))).to_eq(String.from(&"%zz"))
+    t.expect(url_decode(&"foo%20bar")).to_eq("foo bar")
+    t.expect(url_decode(&"a+b")).to_eq("a b")
+    t.expect(url_decode(&"plain")).to_eq("plain")
+    t.expect(url_decode(&"%zz")).to_eq("%zz")
   end
 
   t.it("parse_query_into splits pairs, defaults flags, and url-decodes") do
     var m: Map[String, String] = Map.new
-    let q = String.from(&"a=1&b=hello%20world&flag")
+    let q = "a=1&b=hello%20world&flag"
     parse_query_into(&q, &var m)
     let a = match m.get(&"a")
       Some(v) -> v
-      nil    -> String.from(&"<none>")
+      nil    -> "<none>"
     end
-    t.expect(a).to_eq(String.from(&"1"))
+    t.expect(a).to_eq("1")
     let b = match m.get(&"b")
       Some(v) -> v
-      nil    -> String.from(&"<none>")
+      nil    -> "<none>"
     end
-    t.expect(b).to_eq(String.from(&"hello world"))
+    t.expect(b).to_eq("hello world")
     let flag = match m.get(&"flag")
       Some(v) -> v
-      nil    -> String.from(&"<missing>")
+      nil    -> "<missing>"
     end
-    t.expect(flag).to_eq(String.from(&""))
+    t.expect(flag).to_eq("")
   end
 
   t.it("parse_cookies_into splits on ; and trims pairs") do
     var c: Map[String, String] = Map.new
-    let raw = String.from(&"user=ada; sid=xyz")
+    let raw = "user=ada; sid=xyz"
     parse_cookies_into(&raw, &var c)
     let user = match c.get(&"user")
       Some(v) -> v
-      nil    -> String.from(&"<none>")
+      nil    -> "<none>"
     end
-    t.expect(user).to_eq(String.from(&"ada"))
+    t.expect(user).to_eq("ada")
     let sid = match c.get(&"sid")
       Some(v) -> v
-      nil    -> String.from(&"<none>")
+      nil    -> "<none>"
     end
-    t.expect(sid).to_eq(String.from(&"xyz"))
+    t.expect(sid).to_eq("xyz")
   end
 
   t.it("parse_header_into lowercases name, trims value, returns true") do
     var h: Map[String, String] = Map.new
-    let ok = parse_header_into(&String.from(&"Content-Type: text/plain"), &var h)
+    let ok = parse_header_into(&"Content-Type: text/plain", &var h)
     let _o = BoolMatcher.new(ok).to_be_truthy
     let v = match h.get(&"content-type")
       Some(x) -> x
-      nil    -> String.from(&"<none>")
+      nil    -> "<none>"
     end
-    t.expect(v).to_eq(String.from(&"text/plain"))
+    t.expect(v).to_eq("text/plain")
   end
 
   t.it("parse_header_into returns false for a line with no colon") do
     var h: Map[String, String] = Map.new
-    let ok = parse_header_into(&String.from(&"garbage-line"), &var h)
+    let ok = parse_header_into(&"garbage-line", &var h)
     let _o = BoolMatcher.new(ok).to_be_falsy
   end
 
   t.it("rebuild_body joins slots[1..], empty when there is no body slot") do
     var one: Array[String] = Array.new
-    one.push(String.from(&"head"))
-    t.expect(rebuild_body(&one)).to_eq(String.from(&""))
+    one.push("head")
+    t.expect(rebuild_body(&one)).to_eq("")
     var many: Array[String] = Array.new
-    many.push(String.from(&"head"))
-    many.push(String.from(&"a"))
-    many.push(String.from(&"b"))
-    t.expect(rebuild_body(&many)).to_eq(String.from(&"a\r\n\r\nb"))
+    many.push("head")
+    many.push("a")
+    many.push("b")
+    t.expect(rebuild_body(&many)).to_eq("a\r\n\r\nb")
   end
 
   t.it("parse_content_length reads the header, 0 when absent or malformed") do
-    t.expect(parse_content_length(&String.from(&"POST / HTTP/1.1\r\nContent-Length: 42\r\nHost: x"))).to_eq(42)
-    t.expect(parse_content_length(&String.from(&"GET / HTTP/1.1\r\nHost: x"))).to_eq(0)
-    t.expect(parse_content_length(&String.from(&"POST / HTTP/1.1\r\nContent-Length: oops"))).to_eq(0)
+    t.expect(parse_content_length(&"POST / HTTP/1.1\r\nContent-Length: 42\r\nHost: x")).to_eq(42)
+    t.expect(parse_content_length(&"GET / HTTP/1.1\r\nHost: x")).to_eq(0)
+    t.expect(parse_content_length(&"POST / HTTP/1.1\r\nContent-Length: oops")).to_eq(0)
   end
 
   t.it("extract_method pulls the verb off the request line") do
-    t.expect(extract_method(&String.from(&"GET / HTTP/1.1\r\nHost: x"))).to_eq(String.from(&"GET"))
-    t.expect(extract_method(&String.from(&"POST /echo HTTP/1.1\r\n"))).to_eq(String.from(&"POST"))
+    t.expect(extract_method(&"GET / HTTP/1.1\r\nHost: x")).to_eq("GET")
+    t.expect(extract_method(&"POST /echo HTTP/1.1\r\n")).to_eq("POST")
   end
 
   t.it("head_only_wire keeps the head + terminator and drops the body") do
-    let wire = String.from(&"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi")
-    t.expect(head_only_wire(&wire)).to_eq(String.from(&"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n"))
+    let wire = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi"
+    t.expect(head_only_wire(&wire)).to_eq("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n")
   end
 
   t.it("reason_phrase maps known codes and falls back to OK") do
-    t.expect(reason_phrase(200)).to_eq(String.from(&"OK"))
-    t.expect(reason_phrase(204)).to_eq(String.from(&"No Content"))
-    t.expect(reason_phrase(404)).to_eq(String.from(&"Not Found"))
-    t.expect(reason_phrase(500)).to_eq(String.from(&"Internal Server Error"))
-    t.expect(reason_phrase(799)).to_eq(String.from(&"OK"))
+    t.expect(reason_phrase(200)).to_eq("OK")
+    t.expect(reason_phrase(204)).to_eq("No Content")
+    t.expect(reason_phrase(404)).to_eq("Not Found")
+    t.expect(reason_phrase(500)).to_eq("Internal Server Error")
+    t.expect(reason_phrase(799)).to_eq("OK")
   end
 end

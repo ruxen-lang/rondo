@@ -2,23 +2,23 @@
 Tester.describe("Request") do |t: &var Tester|
   t.it("build sets method, path, and body") do
     let req = Request.build(&"POST", &"/echo", &"hello")
-    t.expect(req.method.clone).to_eq(String.from(&"POST"))
-    t.expect(req.path.clone).to_eq(String.from(&"/echo"))
-    t.expect(req.body.clone).to_eq(String.from(&"hello"))
+    t.expect(req.method.clone).to_eq("POST")
+    t.expect(req.path.clone).to_eq("/echo")
+    t.expect(req.body.clone).to_eq("hello")
   end
 
   t.it("parse reads method/path/body and a header from the wire") do
     let raw = "GET /hello/ada HTTP/1.1\r\nHost: localhost\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nhello"
     match Request.parse(&raw)
       Some(req) ->
-        let _ = t.expect(req.method.clone).to_eq(String.from(&"GET"))
-        t.expect(req.path.clone).to_eq(String.from(&"/hello/ada"))
-        t.expect(req.body.clone).to_eq(String.from(&"hello"))
+        let _ = t.expect(req.method.clone).to_eq("GET")
+        t.expect(req.path.clone).to_eq("/hello/ada")
+        t.expect(req.body.clone).to_eq("hello")
         let ct = match req.header(&"content-type")
           Some(v) -> v
-          nil    -> String.from(&"<none>")
+          nil    -> "<none>"
         end
-        t.expect(ct).to_eq(String.from(&"text/plain"))
+        t.expect(ct).to_eq("text/plain")
       nil ->
         let _ = BoolMatcher.new(false).to_be_truthy
     end
@@ -27,17 +27,17 @@ Tester.describe("Request") do |t: &var Tester|
   t.it("parse extracts the query string into params") do
     match Request.parse(&"GET /search?q=hello&page=2 HTTP/1.1\r\n\r\n")
       Some(req) ->
-        let _ = t.expect(req.path.clone).to_eq(String.from(&"/search"))
+        let _ = t.expect(req.path.clone).to_eq("/search")
         let q = match req.param(&"q")
           Some(v) -> v
-          nil    -> String.from(&"<none>")
+          nil    -> "<none>"
         end
-        t.expect(q).to_eq(String.from(&"hello"))
+        t.expect(q).to_eq("hello")
         let page = match req.param(&"page")
           Some(v) -> v
-          nil    -> String.from(&"<none>")
+          nil    -> "<none>"
         end
-        t.expect(page).to_eq(String.from(&"2"))
+        t.expect(page).to_eq("2")
       nil ->
         let _ = BoolMatcher.new(false).to_be_truthy
     end
@@ -56,9 +56,9 @@ Tester.describe("Request") do |t: &var Tester|
       Some(req) ->
         let who = match req.cookie(&"user")
           Some(v) -> v
-          nil    -> String.from(&"<none>")
+          nil    -> "<none>"
         end
-        let _ = t.expect(who).to_eq(String.from(&"ada"))
+        let _ = t.expect(who).to_eq("ada")
       nil ->
         let _ = BoolMatcher.new(false).to_be_truthy
     end

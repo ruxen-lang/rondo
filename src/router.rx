@@ -50,7 +50,7 @@ def find_get_route_for(routes: &Array[Route], path: &String) -> Int
       let route = route_opt.unwrap()
       if route.method == "GET"
         var probe = Request.new
-        probe.method = String.from(&"GET")
+        probe.method = "GET"
         probe.path = path.clone
         let m = route.matches(&probe)
         if m.is_some()

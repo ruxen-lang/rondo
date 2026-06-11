@@ -286,7 +286,7 @@ def extract_method(raw: &String) -> String
   if (parts.size() as Int) >= 1
     segment_at(&parts, 0)
   else
-    String.from(&"GET")
+    "GET"
   end
 end
 
@@ -337,7 +337,7 @@ end
 # the constraint.
 def segment_satisfies(constraint: &String, seg: &String) -> Bool
   let anchored = "^" + constraint.clone + "$"
-  let flags = String.from(&"")
+  let flags = ""
   match Regex.new(&anchored, &flags)
     Ok(rx) -> rx.is_match(seg)
     Err(_) -> false
