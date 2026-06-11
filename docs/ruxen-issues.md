@@ -695,9 +695,16 @@ reference it as the integration harness; treat those references as stale
 and run `ruxen test` directly.) Surfacing this also re-exposed W6 — see M1
 below.
 
-### W21. Bare string literal not coerced to `String` in tuple-element position
+### W21. Bare string literal not coerced to `String` in tuple-element position — ✅ RESOLVED (ruxen Q39, 2026-06-11)
 
-**Symptom:** under the bare-literal model (M1), a bare `""` literal placed
+**Fixed upstream and installed:** filed centrally as **Q39** and fixed the same
+day (`coerce_tuple_literal_elements` in ruxen's typeck — return and `let`
+seams, descending into if/else/match-arm tails; pinned by ruxen e2e case 924
+using this exact `(String, Bool)` shape). Rondo's two `("".to_string(), false)`
+workarounds in `src/async_server.rx` were reverted to bare `("", false)` and
+the suite is green (72/72). Kept for history:
+
+**Symptom (historical):** under the bare-literal model (M1), a bare `""` literal placed
 as a tuple element whose expected element type is `String` is NOT coerced —
 it stays `&str`, so the tuple's type is `(&str, Bool)` instead of the
 expected `(String, Bool)`.

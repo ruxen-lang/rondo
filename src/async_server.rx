@@ -38,7 +38,7 @@ def async_cycle_wire(app: &Rondo, raw_result: Result[String, IoError]) -> (Strin
     Ok(raw) ->
       let _x = 0
       if raw.size() == 0
-        ("".to_string(), false)
+        ("", false)
       else
         let method = extract_method(&raw)
         var close_after: Bool = true
@@ -65,7 +65,7 @@ def async_cycle_wire(app: &Rondo, raw_result: Result[String, IoError]) -> (Strin
         end
         (wire, !close_after)
       end
-    Err(_) -> ("".to_string(), false)
+    Err(_) -> ("", false)
   end
 end
 
