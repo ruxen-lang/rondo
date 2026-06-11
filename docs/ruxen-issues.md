@@ -453,15 +453,19 @@ a `&str`. In Rondo's case, fields are `String`-typed and helper
 args bind via `&String`, so this is fine on the framework's hot
 paths.
 
-### W12. String-literal-to-String coercion in Option/Result payloads
+### W12. String-literal-to-String coercion in Option/Result payloads — **RESOLVED by the literal model (2026-06-11), see M1**
 
-**Symptom:** `Some("ada")` where the declared return type is
-`Option[String]` fails typeck with
+**Symptom (historical):** `Some("ada")` where the declared return type is
+`Option[String]` failed typeck with
 "expected Option[String], found Option[&str]". String literals
-default to `&str` and aren't auto-coerced into the payload type.
+defaulted to `&str` and weren't auto-coerced into the payload type.
 
-**Workaround:** `Some(String.from(&"ada"))` — explicit
-construction. Verbose but correct.
+**Historical workaround:** `Some(String.from(&"ada"))` — explicit
+construction.
+
+**Now:** under the bare-literal model (M1) a bare `"ada"` IS an owned
+`String`, so `Some("ada")` typechecks directly. The residual coercion gap
+is narrower and lives only in tuple-element position — see W21.
 
 ### W13. `pub` keyword not supported
 
@@ -680,6 +684,86 @@ in-process `Rondo.dispatch(req) -> Response` checks in
 `ruxen build` and therefore see the whole library. Migrate those into
 `ruxen test` files once the runner gains multi-file / dependency
 linking (tracked alongside W14's flat-merge resolver work).
+
+**Update (2026-06-11):** Q16 is fixed upstream — `ruxen test` now links
+the project library, and all 10 `tests/**.rx` files compile, link, and run
+(72 examples, all green). The single-file-runner limitation in W20 no
+longer applies; the public API (`Rondo.dispatch`, `Request.parse`,
+`Response.*`) IS exercised through `ruxen test` today. (`rondo-smoke` is
+also no longer present on disk — the docs above and `CLAUDE.md` still
+reference it as the integration harness; treat those references as stale
+and run `ruxen test` directly.) Surfacing this also re-exposed W6 — see M1
+below.
+
+### W21. Bare string literal not coerced to `String` in tuple-element position
+
+**Symptom:** under the bare-literal model (M1), a bare `""` literal placed
+as a tuple element whose expected element type is `String` is NOT coerced —
+it stays `&str`, so the tuple's type is `(&str, Bool)` instead of the
+expected `(String, Bool)`.
+
+Minimal repro:
+
+```ruxen
+def make_pair(b: Bool) -> (String, Bool)
+  if b
+    ("", false)        # error: expected (String, Bool), found (&str, Bool)
+  else
+    ("x", true)
+  end
+end
+```
+
+The coercion that works in `let` / field / param / `Some(...)` positions
+does not propagate into tuple elements.
+
+**Workaround in Rondo:** spell the element `"".to_string()` (an owned
+`String`). `async_cycle_wire` in `src/async_server.rx` uses
+`("".to_string(), false)` for its two empty-wire returns. `.clone` on a
+bare literal link-fails here, and `String.from` is being removed, so
+`.to_string()` is the forward-compatible spelling.
+
+**For the coordinator's ruxen ledger:** this is a genuine new compiler gap
+(literal→String coercion missing in tuple-element position). Repro above;
+severity low (one-line workaround). Q-number to be assigned centrally.
+
+---
+
+## Migration log
+
+### M1. String-literal model + `Map`→`Hash` + W6 resurfacing (2026-06-11)
+
+The installed toolchain (`local-1b45eb1`) landed several breaking changes at
+once. Rondo migrated to all of them on branch `feat/string-literal-model`:
+
+1. **Bare literals are owned Strings; `String.from` deleted.** A bare
+   `"literal"` is now an owned `String` in every position (params, fields,
+   `Err(...)` into `Result[T, String]`, collections, returns, let-bindings).
+   `String.from` is being removed from the stdlib; `.clone` (same C symbol)
+   is the spelling for a runtime borrow→owned copy. Rondo swept all 133
+   `String.from(&"literal")` sites (6 in `src/`, 127 in `tests/`) down to the
+   bare literal — every site was the borrowed-literal shape, so no `.clone`
+   rewrites were needed. `String.from_bytes` (the bytes→String conversion
+   behind W8) is a *different* method and is preserved. Residual coercion gap:
+   W21 (tuple elements). This obsoletes the W12 workaround.
+
+2. **`Map` renamed to `Hash` (stdlib rename, NOT a compiler bug).** The
+   prelude map type is now `Hash[K, V]` (same `insert`/`get`/`keys`/`len`
+   API). `Hash` is live across the whole Ruxen stack (quiver/canvas/stdlib);
+   rondo was the only repo still on `Map` and so failed `ruxen build` with 34
+   `undefined type Map` errors before any change. Renamed all 41 `Map` sites
+   (33 `src/`, 8 `tests/`) to `Hash`. No Q-number — this is a rename rondo
+   missed, reconciled centrally.
+
+3. **W6 re-exposed by the Q16 fix.** With `ruxen test` now linking the
+   library, four `.is_some()`/`.unwrap()` calls on parameterised `Option`
+   types (`Option[&Route]_is_some`, `Option[Hash[String,String]]_is_some`,
+   etc.) link-failed — the W6 family. `ruxen build` had hidden these because
+   the library link didn't force those monomorphisations. Converted all four
+   (`rondo.rx` ×2, `router.rx` ×1, `request.rx` ×1) to the codebase's
+   documented W6 `match … Some(x) -> … nil -> 0` form.
+
+End state: `ruxen build` green; `ruxen test` 72 passed / 0 failed / 0 pending.
 
 ---
 
