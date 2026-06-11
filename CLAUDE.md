@@ -133,3 +133,19 @@ When you encounter a *new* compiler quirk, add an entry to `docs/ruxen-issues.md
 - **HEAD requests fall back to the matching GET route**, then the response body is stripped at the wire layer in `handle_one` so `Content-Length` still reflects the GET-shape byte count (RFC 9110 §9.3.2).
 - **Static-file fallback rejects `..` segments** in `try_static_or_404` to prevent path traversal — preserve this if you touch the static path.
 - **Empty `public_folder` disables static serving.** Don't replace the check with a `nil` sentinel.
+
+## Task tracking & keeping context current
+
+- **Canonical task list: [`docs/remaining-tasks.md`](docs/remaining-tasks.md)** —
+  audited against `src/**`: what's implemented vs. genuinely outstanding, including
+  the Ruxen runtime/reactor work that surfaces as Rondo latency. Single place open
+  rondo work is tracked; the workspace umbrella (`../CLAUDE.md`) links it, not duplicates it.
+- Every change updates docs in the same commit: tick/extend `docs/remaining-tasks.md`,
+  and log compiler workarounds/fixes in `docs/ruxen-issues.md` (W-series for
+  in-code workarounds, F-series for upstream fixes) — as the "When you encounter a
+  *new* compiler quirk" note above already requires.
+- A genuinely new compiler quirk is also a **language task**: add a `Q##` entry to
+  `../ruxen/docs/dev/gui-stack-v1-issues.md` (repro + severity) and list it in
+  `../ruxen/docs/TASKS.md`, cross-linked from the `W##`/`F##` entry here.
+- A `Stop` hook in `.claude/settings.json` reminds you of the above when a session
+  touched source. (Note: this repo forbids the `Co-Authored-By: Claude` trailer.)
