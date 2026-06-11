@@ -10,12 +10,12 @@
 ## ```
 class Response
   status: Int
-  headers: Map[String, String]
+  headers: Hash[String, String]
   body: String
 
   def init
     self.status = 200
-    self.headers = Map.new
+    self.headers = Hash.new
     self.body = ""
   end
 
@@ -90,7 +90,7 @@ class Response
 
   ## Set-Cookie wrapper. Appends a `Set-Cookie: <name>=<value>`
   ## header. Multiple cookies → multiple Set-Cookie headers via
-  ## repeated calls (Sinatra-style; Map.insert overwrites today
+  ## repeated calls (Sinatra-style; Hash.insert overwrites today
   ## so we shim per-call via a numeric suffix on the storage key —
   ## the wire-emission strips the suffix in `to_http`).
   ##
@@ -165,7 +165,7 @@ class Response
   ##   HTTP/1.1 <status> <reason>\r\n
   ##   Content-Length: <body bytes>\r\n
   ##   <header>: <value>\r\n     × N (in `headers` insertion order
-  ##                                 via Map.keys() iteration order;
+  ##                                 via Hash.keys() iteration order;
   ##                                 hash-ordered today, which is
   ##                                 fine for HTTP — order is not
   ##                                 semantic except for Set-Cookie
@@ -204,7 +204,7 @@ class Response
       end
       # `with_cookie(name, value)` stores under the key
       # `set-cookie:<name>` so multiple cookies don't overwrite
-      # each other in the Map. The wire format strips that prefix
+      # each other in the Hash. The wire format strips that prefix
       # back out and emits as `Set-Cookie: <name>=<value>`.
       if name.starts_with(&"set-cookie:")
         let cookie_name = name.replace(&"set-cookie:", &"")

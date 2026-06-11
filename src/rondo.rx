@@ -19,7 +19,7 @@ class Rondo
   # code; if a route handler (or the 404 fallback) returns a
   # status that has a registered error handler, the handler is
   # invoked to produce the actual response. Implemented as
-  # parallel arrays because `Map[Int, any Fn(...)]` doesn't
+  # parallel arrays because `Hash[Int, any Fn(...)]` doesn't
   # round-trip through Ruxen's generic-map storage cleanly.
   error_codes: Array[Int]
   error_handlers: Array[any Fn(&Request, Response) -> Response]
@@ -258,7 +258,7 @@ class Rondo
     let n: Int = self.routes.size() as Int
     var i: Int = 0
     var matched_idx: Int = -1
-    var matched_params: Map[String, String] = Map.new
+    var matched_params: Hash[String, String] = Hash.new
     while i < n && matched_idx < 0
       match self.routes.get(i)
         Some(route) ->
@@ -276,7 +276,7 @@ class Rondo
 
     # 2. Build the request the handler (and before-hooks) sees —
     # path captures merged on top of any pre-parsed query-string
-    # params. Map.insert overwrites so explicit captures win.
+    # params. Hash.insert overwrites so explicit captures win.
     var r = req
     merge_params_into(&matched_params, &var r.params)
 
@@ -337,10 +337,9 @@ class Rondo
     let ahn: Int = self.after_hooks.size() as Int
     var ahi: Int = 0
     while ahi < ahn
-      let hook_opt = self.after_hooks.get(ahi)
-      if hook_opt.is_some()
-        let hook = hook_opt.unwrap()
-        resp = hook.(&r, resp)
+      match self.after_hooks.get(ahi)
+        Some(hook) -> resp = hook.(&r, resp)
+        nil -> 0
       end
       ahi = ahi + 1
     end
@@ -352,15 +351,15 @@ class Rondo
     let ecn: Int = self.error_codes.size() as Int
     var eci: Int = 0
     while eci < ecn
-      let code_opt = self.error_codes.get(eci)
-      if code_opt.is_some()
-        let code = code_opt.unwrap()
-        if code == resp.status
-          match self.error_handlers.get(eci)
-            Some(h) -> resp = h.(&r, resp)
-            nil    -> 0
+      match self.error_codes.get(eci)
+        Some(code) ->
+          if code == resp.status
+            match self.error_handlers.get(eci)
+              Some(h) -> resp = h.(&r, resp)
+              nil    -> 0
+            end
           end
-        end
+        nil -> 0
       end
       eci = eci + 1
     end

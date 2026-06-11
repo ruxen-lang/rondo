@@ -45,18 +45,18 @@ def find_get_route_for(routes: &Array[Route], path: &String) -> Int
   let n: Int = routes.size() as Int
   var i: Int = 0
   while i < n
-    let route_opt = routes.get(i)
-    if route_opt.is_some()
-      let route = route_opt.unwrap()
-      if route.method == "GET"
-        var probe = Request.new
-        probe.method = "GET"
-        probe.path = path.clone
-        let m = route.matches(&probe)
-        if m.is_some()
-          return i
+    match routes.get(i)
+      Some(route) ->
+        if route.method == "GET"
+          var probe = Request.new
+          probe.method = "GET"
+          probe.path = path.clone
+          match route.matches(&probe)
+            Some(_m) -> return i
+            nil -> 0
+          end
         end
-      end
+      nil -> 0
     end
     i = i + 1
   end

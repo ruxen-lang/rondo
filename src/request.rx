@@ -11,19 +11,19 @@ class Request
   method: String
   path: String
   query: String
-  headers: Map[String, String]
+  headers: Hash[String, String]
   body: String
-  params: Map[String, String]
-  cookies: Map[String, String]
+  params: Hash[String, String]
+  cookies: Hash[String, String]
 
   def init
     self.method = "GET"
     self.path = "/"
     self.query = ""
-    self.headers = Map.new
+    self.headers = Hash.new
     self.body = ""
-    self.params = Map.new
-    self.cookies = Map.new
+    self.params = Hash.new
+    self.cookies = Hash.new
   end
 
   ## Cookie lookup. Returns `nil` if the cookie isn't set.
@@ -88,10 +88,9 @@ class Request
     # Cookie header → req.cookies map. The Cookie header (singular
     # in HTTP/1.1) carries `name=value; name=value; …`. Values are
     # URL-decoded the same way query params are (see parse_cookies_into).
-    let cookie_hdr = r.headers.get(&"cookie")
-    if cookie_hdr.is_some()
-      let cookies_str = cookie_hdr.unwrap()
-      parse_cookies_into(cookies_str, &var r.cookies)
+    match r.headers.get(&"cookie")
+      Some(cookies_str) -> parse_cookies_into(cookies_str, &var r.cookies)
+      nil -> 0
     end
 
     Some(r)
@@ -122,8 +121,8 @@ class Request
   ##   end
   ## })
   ## ```
-  def form -> Map[String, String]
-    var out: Map[String, String] = Map.new
+  def form -> Hash[String, String]
+    var out: Hash[String, String] = Hash.new
     let ct = match self.headers.get(&"content-type")
       Some(v) -> v
       nil    -> ""

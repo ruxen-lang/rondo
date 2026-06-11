@@ -19,7 +19,7 @@ Tester.describe("helpers") do |t: &var Tester|
   end
 
   t.it("parse_query_into splits pairs, defaults flags, and url-decodes") do
-    var m: Map[String, String] = Map.new
+    var m: Hash[String, String] = Hash.new
     let q = "a=1&b=hello%20world&flag"
     parse_query_into(&q, &var m)
     let a = match m.get(&"a")
@@ -40,7 +40,7 @@ Tester.describe("helpers") do |t: &var Tester|
   end
 
   t.it("parse_cookies_into splits on ; and trims pairs") do
-    var c: Map[String, String] = Map.new
+    var c: Hash[String, String] = Hash.new
     let raw = "user=ada; sid=xyz"
     parse_cookies_into(&raw, &var c)
     let user = match c.get(&"user")
@@ -56,7 +56,7 @@ Tester.describe("helpers") do |t: &var Tester|
   end
 
   t.it("parse_header_into lowercases name, trims value, returns true") do
-    var h: Map[String, String] = Map.new
+    var h: Hash[String, String] = Hash.new
     let ok = parse_header_into(&"Content-Type: text/plain", &var h)
     let _o = BoolMatcher.new(ok).to_be_truthy
     let v = match h.get(&"content-type")
@@ -67,7 +67,7 @@ Tester.describe("helpers") do |t: &var Tester|
   end
 
   t.it("parse_header_into returns false for a line with no colon") do
-    var h: Map[String, String] = Map.new
+    var h: Hash[String, String] = Hash.new
     let ok = parse_header_into(&"garbage-line", &var h)
     let _o = BoolMatcher.new(ok).to_be_falsy
   end
