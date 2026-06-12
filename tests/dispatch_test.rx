@@ -9,7 +9,7 @@ Tester.describe("Rondo.dispatch") do |t: &var Tester|
     app.get(&"/", { |req: &Request| Response.text(&"hello, world") })
     let res = app.dispatch(Request.build(&"GET", &"/", &""))
     t.expect(res.status).to_eq(200)
-    t.expect(res.body).to_eq(String.from(&"hello, world"))
+    t.expect(res.body).to_eq("hello, world")
   end
 
   t.it("returns 404 for an unregistered path") do
@@ -66,9 +66,9 @@ Tester.describe("Rondo.dispatch") do |t: &var Tester|
     let res = app.dispatch(Request.build(&"GET", &"/", &""))
     let v = match res.headers.get(&"x-after")
       Some(x) -> x
-      nil    -> String.from(&"<none>")
+      nil    -> "<none>"
     end
-    t.expect(v).to_eq(String.from(&"ran"))
+    t.expect(v).to_eq("ran")
   end
 
   t.it("error-handler substitutes the body when the status matches") do

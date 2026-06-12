@@ -112,7 +112,7 @@ end
 # Copy each entry from `src` onto `dst`. Used by Rondo.dispatch
 # to overlay path captures on top of query-string params (captures
 # win on key collision because they're inserted last).
-def merge_params_into(src: &Map[String, String], dst: &var Map[String, String])
+def merge_params_into(src: &Hash[String, String], dst: &var Hash[String, String])
   let ks = src.keys()
   let n: Int = ks.size() as Int
   var i: Int = 0
@@ -125,7 +125,7 @@ def merge_params_into(src: &Map[String, String], dst: &var Map[String, String])
   end
 end
 
-def copy_one_param(name: &String, src: &Map[String, String], dst: &var Map[String, String])
+def copy_one_param(name: &String, src: &Hash[String, String], dst: &var Hash[String, String])
   match src.get(name)
     Some(v) -> dst.insert(name.clone, v.clone)
     nil    -> 0
@@ -135,7 +135,7 @@ end
 # Parse a URL-encoded query string ("foo=bar&baz=qux") into the
 # params map. Each name and value is URL-decoded (`%xx` escapes and
 # `+`→space) via `url_decode` in `insert_query_pair`.
-def parse_query_into(query: &String, params: &var Map[String, String])
+def parse_query_into(query: &String, params: &var Hash[String, String])
   let pairs = query.split(&"&")
   let n: Int = pairs.size() as Int
   var i: Int = 0
@@ -151,7 +151,7 @@ end
 # Sinatra's behaviour. Empty `name` is dropped silently. Both
 # `name` and `value` are URL-decoded (`%xx` + `+`→space) on the
 # way in.
-def insert_query_pair(pair: &String, params: &var Map[String, String])
+def insert_query_pair(pair: &String, params: &var Hash[String, String])
   if pair.size() > 0
     let kv = pair.split(&"=")
     let name_raw = segment_at(&kv, 0)
@@ -173,7 +173,7 @@ end
 # first `=`. Pairs without `=` are treated as a flag (empty
 # value); empty names are dropped. Matches Sinatra's
 # `Rack::Cookies` lenience.
-def parse_cookies_into(raw: &String, cookies: &var Map[String, String])
+def parse_cookies_into(raw: &String, cookies: &var Hash[String, String])
   let pairs = raw.split(&";")
   let n: Int = pairs.size() as Int
   var i: Int = 0
@@ -187,7 +187,7 @@ def parse_cookies_into(raw: &String, cookies: &var Map[String, String])
   end
 end
 
-def stash_cookie_pair(pair: &String, cookies: &var Map[String, String])
+def stash_cookie_pair(pair: &String, cookies: &var Hash[String, String])
   let parts = pair.split(&"=")
   let name_raw = segment_at(&parts, 0)
   if name_raw.size() > 0
@@ -214,7 +214,7 @@ end
 # Returns true when a header was parsed, false if the line had no
 # colon (in which case the line is silently dropped — same
 # behaviour as net/http's parser for malformed lines).
-def parse_header_into(line: &String, headers: &var Map[String, String]) -> Bool
+def parse_header_into(line: &String, headers: &var Hash[String, String]) -> Bool
   match line.find(&":")
     Some(_idx) ->
       let pair = line.split(&":")
@@ -286,7 +286,7 @@ def extract_method(raw: &String) -> String
   if (parts.size() as Int) >= 1
     segment_at(&parts, 0)
   else
-    String.from(&"GET")
+    "GET"
   end
 end
 
@@ -337,7 +337,7 @@ end
 # the constraint.
 def segment_satisfies(constraint: &String, seg: &String) -> Bool
   let anchored = "^" + constraint.clone + "$"
-  let flags = String.from(&"")
+  let flags = ""
   match Regex.new(&anchored, &flags)
     Ok(rx) -> rx.is_match(seg)
     Err(_) -> false

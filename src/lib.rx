@@ -71,5 +71,5 @@
 ## app.listen(&"127.0.0.1:8421", 4) # full address + workers
 ## ```
 ##
-## Note: String, Array, Map, Option, Result are all in the Ruxen
+## Note: String, Array, Hash, Option, Result are all in the Ruxen
 ## prelude — no `use` needed.

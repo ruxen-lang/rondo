@@ -3,7 +3,7 @@ Tester.describe("Response") do |t: &var Tester|
   t.it("text() is 200 with the given body") do
     let r = Response.text(&"hi")
     t.expect(r.status).to_eq(200)
-    t.expect(r.body).to_eq(String.from(&"hi"))
+    t.expect(r.body).to_eq("hi")
   end
 
   t.it("json() is 200") do
@@ -31,7 +31,7 @@ Tester.describe("Response") do |t: &var Tester|
   t.it("with_body replaces the body") do
     var r = Response.text(&"old")
     r.with_body(&"new")
-    t.expect(r.body).to_eq(String.from(&"new"))
+    t.expect(r.body).to_eq("new")
   end
 
   t.it("with_header lowercases the header name") do
@@ -39,9 +39,9 @@ Tester.describe("Response") do |t: &var Tester|
     r.with_header(&"X-Test", &"yes")
     let v = match r.headers.get(&"x-test")
       Some(x) -> x
-      nil    -> String.from(&"<none>")
+      nil    -> "<none>"
     end
-    t.expect(v).to_eq(String.from(&"yes"))
+    t.expect(v).to_eq("yes")
   end
 
   t.it("redirect() is 302 with a location header") do
@@ -49,9 +49,9 @@ Tester.describe("Response") do |t: &var Tester|
     t.expect(r.status).to_eq(302)
     let loc = match r.headers.get(&"location")
       Some(x) -> x
-      nil    -> String.from(&"<none>")
+      nil    -> "<none>"
     end
-    t.expect(loc).to_eq(String.from(&"/home"))
+    t.expect(loc).to_eq("/home")
   end
 
   t.it("to_http emits status line, Content-Length, and body after the terminator") do

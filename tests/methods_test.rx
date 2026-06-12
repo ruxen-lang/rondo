@@ -9,9 +9,9 @@ Tester.describe("Rondo.head / Rondo.options") do |t: &var Tester|
     t.expect(res.status).to_eq(200)
     let allow = match res.headers.get(&"allow")
       Some(v) -> v
-      nil    -> String.from(&"<none>")
+      nil    -> "<none>"
     end
-    t.expect(allow).to_eq(String.from(&"GET, POST"))
+    t.expect(allow).to_eq("GET, POST")
   end
 
   t.it("dispatches an explicit HEAD route to its handler") do
@@ -21,9 +21,9 @@ Tester.describe("Rondo.head / Rondo.options") do |t: &var Tester|
     t.expect(res.status).to_eq(200)
     let pong = match res.headers.get(&"x-pong")
       Some(v) -> v
-      nil    -> String.from(&"<none>")
+      nil    -> "<none>"
     end
-    t.expect(pong).to_eq(String.from(&"1"))
+    t.expect(pong).to_eq("1")
   end
 
   t.it("an explicit HEAD route is preferred over GET fallback") do
@@ -33,9 +33,9 @@ Tester.describe("Rondo.head / Rondo.options") do |t: &var Tester|
     let res = app.dispatch(Request.build(&"HEAD", &"/ping", &""))
     let src = match res.headers.get(&"x-src")
       Some(v) -> v
-      nil    -> String.from(&"<none>")
+      nil    -> "<none>"
     end
-    t.expect(src).to_eq(String.from(&"head"))
+    t.expect(src).to_eq("head")
   end
 
   t.it("an explicit OPTIONS route wins over the CORS auto-preflight") do
@@ -44,7 +44,7 @@ Tester.describe("Rondo.head / Rondo.options") do |t: &var Tester|
     app.options(&"/widgets", { |req: &Request| Response.text(&"custom").with_status(200) })
     let res = app.dispatch(Request.build(&"OPTIONS", &"/widgets", &""))
     t.expect(res.status).to_eq(200)
-    t.expect(res.body).to_eq(String.from(&"custom"))
+    t.expect(res.body).to_eq("custom")
   end
 
   t.it("CORS auto-preflight still fires for OPTIONS with no explicit route") do

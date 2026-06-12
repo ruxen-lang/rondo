@@ -112,9 +112,9 @@ The codebase is shaped by the Ruxen compiler's current limitations. **`docs/ruxe
 - **W3 — Don't use `()` as an expression.** Use `0` for no-op match arms whose value is discarded.
 - **W4 — Closure bodies are single-expression only.** Handlers passed to `app.get(...)` etc. must be one expression — extract real work into free fns (`hello_body(&req)`) and call them from the closure. This is fine ergonomically and matches Sinatra's "thin routes" style.
 - **W5 — Generic-method dispatch fails on iterator elements.** Don't use `for x in array.iter` followed by method calls on `x`. Use indexed `array.get(i)` with a `match Some(x) -> … None -> 0`. Every loop over `self.routes`, `self.before_hooks`, etc. follows this pattern.
-- **W6 — `Option.unwrap()` / `is_some()` link-fail on parameterized types.** Pattern-match instead: `match opt; Some(x) -> x; None -> default; end`. (A few `.is_some() / .unwrap()` calls in the file currently work because they're on concrete `Option[Request]` etc. — but prefer the match form for safety.)
+- **W6 — `Option.unwrap()` / `is_some()` link-fail on parameterized types.** Pattern-match instead: `match opt; Some(x) -> x; nil -> default; end`. (Now that `ruxen test` links the library — Q16 — these link-fail even where they used to compile under `ruxen build`; the whole codebase is on the match form. See migration log M1 in `docs/ruxen-issues.md`.)
 - **W10 — Forward references fail in parameter/return-type positions.** Put helpers whose signatures mention user classes at the bottom of the file.
-- **W12 — String literals are `&str`, not `String`.** When returning `Option[String]`, write `Some(String.from(&"ada"))`, not `Some("ada")`.
+- **W12 — RESOLVED by the literal model.** A bare `"literal"` is now an owned `String` in every position, so `Some("ada")` typechecks directly — no `String.from`. The residual coercion gap is W21 (tuple-element position only); spell those `"".to_string()`. See `docs/ruxen-issues.md` M1.
 - **W13 — No `pub` keyword.** Visibility is implicit; everything is reachable from depending packages.
 
 Workarounds W7 and W8 (dotted-class FFI aliases, no bytes→String) are documented but partially gated — confirm the current Ruxen toolchain has those before relying on them.
@@ -133,3 +133,19 @@ When you encounter a *new* compiler quirk, add an entry to `docs/ruxen-issues.md
 - **HEAD requests fall back to the matching GET route**, then the response body is stripped at the wire layer in `handle_one` so `Content-Length` still reflects the GET-shape byte count (RFC 9110 §9.3.2).
 - **Static-file fallback rejects `..` segments** in `try_static_or_404` to prevent path traversal — preserve this if you touch the static path.
 - **Empty `public_folder` disables static serving.** Don't replace the check with a `nil` sentinel.
+
+## Task tracking & keeping context current
+
+- **Canonical task list: [`docs/remaining-tasks.md`](docs/remaining-tasks.md)** —
+  audited against `src/**`: what's implemented vs. genuinely outstanding, including
+  the Ruxen runtime/reactor work that surfaces as Rondo latency. Single place open
+  rondo work is tracked; the workspace umbrella (`../CLAUDE.md`) links it, not duplicates it.
+- Every change updates docs in the same commit: tick/extend `docs/remaining-tasks.md`,
+  and log compiler workarounds/fixes in `docs/ruxen-issues.md` (W-series for
+  in-code workarounds, F-series for upstream fixes) — as the "When you encounter a
+  *new* compiler quirk" note above already requires.
+- A genuinely new compiler quirk is also a **language task**: add a `Q##` entry to
+  `../ruxen/docs/dev/gui-stack-v1-issues.md` (repro + severity) and list it in
+  `../ruxen/docs/TASKS.md`, cross-linked from the `W##`/`F##` entry here.
+- A `Stop` hook in `.claude/settings.json` reminds you of the above when a session
+  touched source. (Note: this repo forbids the `Co-Authored-By: Claude` trailer.)

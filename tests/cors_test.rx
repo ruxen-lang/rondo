@@ -8,9 +8,9 @@ Tester.describe("CORS middleware") do |t: &var Tester|
     let res = app.dispatch(Request.build(&"GET", &"/api", &""))
     let origin = match res.headers.get(&"access-control-allow-origin")
       Some(v) -> v
-      nil    -> String.from(&"<none>")
+      nil    -> "<none>"
     end
-    t.expect(origin).to_eq(String.from(&"*"))
+    t.expect(origin).to_eq("*")
   end
 
   t.it("an OPTIONS preflight short-circuits to 204") do
@@ -28,14 +28,14 @@ Tester.describe("CORS middleware") do |t: &var Tester|
     let res = app.dispatch(Request.build(&"GET", &"/api", &""))
     let origin = match res.headers.get(&"access-control-allow-origin")
       Some(v) -> v
-      nil    -> String.from(&"<none>")
+      nil    -> "<none>"
     end
-    let _ = t.expect(origin).to_eq(String.from(&"https://client.example"))
+    let _ = t.expect(origin).to_eq("https://client.example")
     let cred = match res.headers.get(&"access-control-allow-credentials")
       Some(v) -> v
-      nil    -> String.from(&"<none>")
+      nil    -> "<none>"
     end
-    t.expect(cred).to_eq(String.from(&"true"))
+    t.expect(cred).to_eq("true")
   end
 
   t.it("default cors() omits credentials and Vary (origin is *)") do
@@ -64,8 +64,8 @@ Tester.describe("CORS middleware") do |t: &var Tester|
     t.expect(res.status).to_eq(403)
     let origin = match res.headers.get(&"access-control-allow-origin")
       Some(v) -> v
-      nil    -> String.from(&"<none>")
+      nil    -> "<none>"
     end
-    t.expect(origin).to_eq(String.from(&"*"))
+    t.expect(origin).to_eq("*")
   end
 end
